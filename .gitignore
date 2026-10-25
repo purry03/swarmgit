@@ -1,0 +1,11 @@
+# Build output
+/target/
+/fuzz/target/
+
+# Fuzzing run artifacts and generated corpus
+/fuzz/artifacts/
+/fuzz/corpus/
+
+# Local logs and editor files
+*.log
+.DS_Store

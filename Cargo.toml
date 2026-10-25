@@ -1,0 +1,51 @@
+[workspace]
+members = ["crates/swarm-core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+
+[workspace.dependencies]
+blake3 = "1"
+ciborium = "0.2"
+data-encoding = "2"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+getrandom = "0.4"
+hex = "0.4"
+ml-dsa = { version = "0.1.2", default-features = false, features = ["alloc", "getrandom"] }
+ml-kem = { version = "0.3.4", default-features = false, features = ["alloc", "getrandom"] }
+proptest = "1"
+rand_core = "0.10"
+serde = "1"
+serde_json = "1"
+slh-dsa = { version = "0.2.0-rc.5", features = ["alloc"] }
+subtle = "2"
+thiserror = "2"
+zeroize = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# `cargo test` is the acceptance command, and SLH-DSA signing is far too slow
+# at opt-level 0. Generic hash loops are monomorphized into the test binary, so
+# optimizing only the dependency is not enough.
+[profile.test]
+opt-level = 3
+
+# The post-quantum crates are extremely slow in an unoptimized build. Optimize
+# dependencies too, so `cargo build` and `cargo run` stay usable.
+[profile.dev.package.ml-dsa]
+opt-level = 3
+[profile.dev.package.ml-kem]
+opt-level = 3
+[profile.dev.package.slh-dsa]
+opt-level = 3
+
+# Generic hash and NTT loops are monomorphized into this crate, so optimizing
+# only the dependencies is not enough.
+[profile.dev]
+opt-level = 2

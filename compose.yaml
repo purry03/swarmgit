@@ -1,0 +1,39 @@
+name: swarmgit
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        # `UID` is a readonly bash builtin, so use HOST_UID/HOST_GID when the
+        # host user is not 1000:1000:
+        #   HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build
+        USER_ID: ${HOST_UID:-1000}
+        GROUP_ID: ${HOST_GID:-1000}
+    image: swarmgit-dev
+    working_dir: /workspace
+    init: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+    environment:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+    # Needed by the namespace tests (`ip netns`, `unshare -n`) and `tcpdump`.
+    # If your Docker seccomp profile still blocks unshare, use the override:
+    #   docker compose -f compose.yaml -f compose.privileged.yaml run --rm dev bash
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
+    # Uncomment for manual cross-container or real-LAN testing instead of
+    # loopback-only e2e tests:
+    # network_mode: host
+
+volumes:
+  cargo-registry:
+  cargo-git:

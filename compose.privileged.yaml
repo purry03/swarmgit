@@ -1,0 +1,5 @@
+# Override for tests that need a full network namespace setup:
+#   docker compose -f compose.yaml -f compose.privileged.yaml run --rm dev bash
+services:
+  dev:
+    privileged: true
