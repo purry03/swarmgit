@@ -23,6 +23,7 @@ services:
     environment:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
+      PATH: /usr/local/cargo/bin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
     # Needed by the namespace tests (`ip netns`, `unshare -n`) and `tcpdump`.
     # If your Docker seccomp profile still blocks unshare, use the override:
     #   docker compose -f compose.yaml -f compose.privileged.yaml run --rm dev bash

@@ -1,0 +1,22 @@
+[package]
+name = "swarm-store"
+description = "Swarmgit data directory, sqlite state and git command wrapper."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+blake3.workspace = true
+hex.workspace = true
+rusqlite.workspace = true
+swarm-core = { path = "../swarm-core" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

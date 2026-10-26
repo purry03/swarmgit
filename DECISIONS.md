@@ -151,3 +151,88 @@ Malformed pins are ignored and leave the hint unpinned.
 name. There is no escape character in v1; a literal `*` cannot be expressed.
 This follows 5.3 literally and is recorded because a future escape syntax
 would change the manifest language.
+
+## M1 (local repo, daemon, CLI, helper)
+
+### Git through the binary, not libgit2
+
+Section 8.1 says the store is an ordinary bare repository and that no git
+protocol is reimplemented. `swarm-store::git` therefore shells out to `git` for
+every operation. It is async because the daemon calls it from tokio, and it
+sets `--git-dir=<store>` or `-C <worktree>` explicitly instead of relying on
+the process environment. The helper has separate `*_inherited` functions that
+let git's own `GIT_DIR` select the destination repository.
+
+### Store paths and the short socket
+
+`$SWARM_HOME/repos/<repo-id>/store.git` and
+`$SWARM_HOME/repos/<repo-id>/manifests/<signer-hex>.cbor` follow 9.4 exactly.
+When `$SWARM_HOME/ipc.sock` would exceed 100 bytes, the socket moves to
+`$XDG_RUNTIME_DIR/swarmgit-<first 8 hex of blake3(SWARM_HOME)>.sock` (or the
+system temp directory when `XDG_RUNTIME_DIR` is unset). Hashing the home path
+rather than truncating it keeps distinct homes apart.
+
+### Autostart uses the `swarm` binary, not `current_exe`
+
+The helper is invoked through a `git-remote-swarm` symlink and dispatches on
+argv[0]. Spawning `current_exe()` from inside the helper would run the helper
+again with `daemon --detach` as its URL. The client therefore looks for
+`$SWARM_BIN`, then a `swarm` sibling of the current executable, then `swarm` on
+`PATH`. This keeps argv[0] dispatch honest and works from both the CLI and the
+helper.
+
+### One manifest file per signer, atomically replaced
+
+The store keeps only the latest accepted envelope per signer, as 9.4 specifies.
+Each write goes to a hidden `0600` temporary file in the same directory and is
+renamed into place. The daemon removes leftover `.tmp` files at startup. A kill
+during `publish` can therefore leave the old file or the new file, never a
+partially written one. The manifest file mode is private because a manifest
+contains the signer's public bundle, not because it is secret.
+
+### `sync` is local-only at M1 and returns `ref_list` as an extension
+
+The 9.3 table defines `sync` as returning `state`, `refs` (a count) and `head`.
+The remote helper also needs the ref-to-object map. `sync` keeps `refs` as the
+count and adds `ref_list`; the helper prefers `ref_list` and accepts an object
+under `refs` for forward compatibility. Nothing in M1 contacts a peer.
+
+### Publish no-op detection and ST-6 restoration
+
+`publish` compares the store's current refs and root fields with the last
+accepted root manifest. If nothing changed it returns the stored `seq` with
+`noop: true`, which is what makes a second `git push` leave `seq` at 2. On any
+failure after the user's push has moved refs, including a missing key, a bad
+key, too many refs, a signing error, an acceptance error or a manifest write
+error, it restores the refs from the last stored manifest. This implements the
+second sentence of ST-6.
+
+### Object format for new repos and clones
+
+A new `swarm init` asks git for sha256 and falls back to sha1 with a warning on
+older git. An existing repository keeps its format. The remote helper
+advertises the `object-format` capability and emits `:object-format sha1|sha256`
+in its `list` reply, so `git clone` of a sha256 repo creates a sha256
+repository. This was verified against git 2.39.5 and git 2.53.
+
+### No-op push versus no signing key
+
+The helper asks `repo_info` for `has_key` before touching the store. Without a
+key it emits `error <dst> no signing key (use: git swarm fork)` for every ref
+and exits 0, with no refs moved. Checking first is what keeps HELP-3 from
+leaving unpublished refs in the store. The daemon still returns
+`no_signing_key` from `publish` for callers that skip the helper.
+
+### Key backup
+
+`swarm key backup <repo> -o FILE` copies the 69-byte key file with the daemon
+out of the loop: it reads through the same permission check as the daemon and
+writes atomically with mode `0600`. The user owns storing the result; the key
+is never printed and never sent over IPC.
+
+### Idle exit during tests
+
+DMN-6 exits after 30 idle minutes when no repo is seeded. M1 seeds the repo
+created by `init`, so the timer rarely fires, and the e2e test uses a normal
+short run. `SWARM_IDLE_EXIT_MINUTES` overrides the default for tests and
+manual experiments without adding `config.toml` parsing early.

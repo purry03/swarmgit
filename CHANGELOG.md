@@ -2,6 +2,45 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## M1 - local repo, daemon, CLI, helper (2026-11-24)
+
+### Added
+
+- `swarm-store` crate: `Home` paths from 9.4, sqlite schema version 1,
+  `RepoStore` (bare store, manifests, signing key) and a `git` binary wrapper
+  for init, refs, update-ref, rev-list, merge-base, fetch, push, pack-objects
+  and index-pack. No libgit2.
+- Private and atomic file I/O: key files and manifests are written through a
+  `0600` temporary file and `rename`, never in place.
+- `swarm-daemon` crate: `flock` lockfile, node key, newline-delimited JSON IPC
+  server and client, autostart, `hello` version check, `init_repo`, local-only
+  `sync`, `publish`, `repo_info`, `list_repos`, `status`, `seed`, `unseed` and
+  `stop`. SIGINT/SIGTERM shutdown, idle-exit timer and stale-ref cleanup at
+  startup.
+- Accept and publish against the store: root manifest `seq` 1 from the user's
+  refs, canonical ref updates through `resolve`, no-op detection, and ST-6 ref
+  restoration when a publish fails.
+- `swarm-cli`: `swarm init`, `link`, `status`, `key backup`, `daemon` and
+  `daemon stop`, plus `--json` output for `init`, `link` and `status`. New
+  repositories default to sha256 when git supports it and fall back to sha1
+  with a warning. A second `swarm init` fails with exit code 1.
+- `git-remote-swarm` through argv[0] dispatch: `list`, `fetch` and `push`
+  against the local store, `:object-format` negotiation for sha1 and sha256
+  clones, HELP-3 no-key errors and all human output on stderr.
+- `tests/e2e/lib.sh` and `tests/e2e/m1.sh`: the 11.2 acceptance block plus
+  second-init, key-backup, no-key-push, SEC-10 log and interrupted-publish
+  checks.
+- `Dockerfile.dev` bakes the `stable` toolchain selected by
+  `rust-toolchain.toml` into the image, so containers no longer auto-install it
+  on first use.
+
+### Security tests
+
+- SEC-8: helper fetches pass `fetch.fsckObjects` and `transfer.fsckObjects`.
+- SEC-10: `m1.sh` greps the daemon log for the repo key in hex and base32.
+- ST-1/ST-2 store config, ST-3/ST-4 canonical ref updates after a complete
+  history check, and ST-5 temporary-ref cleanup.
+
 ## M0 - core types and primitives (2026-11-24)
 
 ### Added

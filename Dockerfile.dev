@@ -30,6 +30,12 @@ RUN rustup component add rustfmt clippy \
  && rustup toolchain install nightly --profile minimal \
  && cargo install --locked cargo-fuzz cargo-deny
 
+# rust-toolchain.toml selects the `stable` channel. Bake it into the image so a
+# fresh container does not download it (and print an auto-install warning) on
+# first use.
+RUN rustup toolchain install stable --profile minimal \
+ && rustup component add --toolchain stable rustfmt clippy
+
 # Isolated Python for scripts/gen_vectors.py.
 RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir blake3

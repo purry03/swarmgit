@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/swarm-core"]
+members = ["crates/swarm-core", "crates/swarm-store", "crates/swarm-daemon", "crates/swarm-cli"]
 resolver = "2"
 
 [workspace.package]
@@ -9,21 +9,29 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.87"
 
 [workspace.dependencies]
+anyhow = "1"
 blake3 = "1"
 ciborium = "0.2"
+clap = { version = "4", features = ["derive"] }
 data-encoding = "2"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+fs2 = "0.4"
 getrandom = "0.4"
 hex = "0.4"
 ml-dsa = { version = "0.1.2", default-features = false, features = ["alloc", "getrandom"] }
 ml-kem = { version = "0.3.4", default-features = false, features = ["alloc", "getrandom"] }
 proptest = "1"
 rand_core = "0.10"
-serde = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 slh-dsa = { version = "0.2.0-rc.5", features = ["alloc"] }
 subtle = "2"
+tempfile = "3"
 thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "process", "io-util", "io-std", "time", "signal", "sync", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1"
 
 [profile.release]
