@@ -2,6 +2,69 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## M2 - encrypted transport and clone from a peer (2026-11-24)
+
+### Added
+
+- `swarm-net` crate: the three-phase handshake and the wire protocol.
+  - Phase A is `Noise_XX_25519_ChaChaPoly_BLAKE2s` with the `swarmgit/v1`
+    prologue and a random-padded `u16` length prefix (NET-2, NET-3).
+  - Phase B carries ML-KEM-768 `PqInit`/`PqResp` (types 14 and 15) inside the
+    Phase A transport frames, derives the directional ChaCha20-Poly1305 keys
+    with `blake3::derive_key`, and zeroizes the decapsulation key and secrets
+    (NET-4 to NET-7).
+  - Phase C sends `PqAuth` (type 16) as the first frame under the new keys.
+    The hybrid signature covers the Phase A handshake hash and the ML-KEM
+    public values, and `Hello` follows only after both signatures verify
+    (NET-10, NET-11).
+  - `u16` ChaCha20-Poly1305 frames with a `u64` per-direction counter, `u32`
+    logical-message lengths, the 8 MiB message cap and the 64-frame limit
+    (7.2).
+  - Every message of 7.3, a session actor with request/response matching,
+    pack streams, request timeouts and protocol limits (7.4).
+  - `PeerAddr` wire encoding for `Peers`, and node-ID pins from `@<node>`.
+- `swarm-disc` crate: route A, link-hint parsing and resolution (6.2), with
+  literal IPv4/IPv6 and DNS hosts.
+- Daemon network side: TCP listener, `daemon.json` with `port`, `pid` and
+  `listen`, `SWARM_LISTEN`, `SWARM_ADVERTISE` and ephemeral-port fallback
+  (NET-1). Server handlers for `GetHeads`, `GetManifest`, `Want`, `Announce`
+  and `GetPeers`, including WANT-1 to WANT-5 (tip-only wants, 4096/1024
+  limits, streamed chunks, one Want per connection and four concurrent
+  uploads).
+- Link-hint sync loop (8.2): candidates from hints plus cached peers, TOFU
+  node pins in the `peers` table, `Heads` acceptance, missing-object wants,
+  pack indexing, fallback to the next session after a bad pack, canonical ref
+  updates and stale results when the store already has refs.
+- `swarm seed`, `swarm unseed` and `swarm fork`, plus the link-with-hint form
+  of `swarm link`. A new clone creates its bare store only after the root
+  manifest reveals `object_format`.
+- `swarm-testpeer` fixture: probes for `HelloFirst`, `SkipPhaseB`,
+  `DoublePqInit` and `HelloBeforeAuth`, and SEC-16 coverage in
+  `crates/swarm-daemon/tests/handshake_modes.rs`.
+- `crates/swarm-net/tests/handshake.rs`: shared-repo success, wrong pin,
+  `no_shared_repo`, and the SEC-18 relay case (pinned rejection plus the
+  documented unpinned success).
+- `tests/e2e/m2.sh`: clone through a link hint, TOFU pin storage, wrong pin,
+  right pin, wrong repo without hanging, B push after copying A's root key,
+  A pulling from B, A push and B pull, a pcap assertion that no repo ID or
+  base32 form appears in the handshake, a second seeder, and a 50 MiB
+  kill-mid-pack failover clone.
+
+### Docker and docs
+
+- `Dockerfile.peers` and `compose.peers.yaml`: two runnable peers on a private
+  network, advertising `a` and `b`, with persistent state volumes.
+- `scripts/peers-demo.sh`: automated clone plus two-way push/pull tour.
+- `docs/USER-GUIDE.md`: the two-peer walkthrough, key copying, seeding,
+  configuration, troubleshooting and test commands.
+- `Dockerfile.dev` grants `tcpdump` file capabilities so the non-root `dev`
+  user can run the packet-capture acceptance checks.
+
+### Fixed
+
+- The frame round-trip unit test no longer deadlocks: it reads the large
+  message while the writer task is still blocked on the duplex buffer.
+
 ## M1 - local repo, daemon, CLI, helper (2026-11-24)
 
 ### Added

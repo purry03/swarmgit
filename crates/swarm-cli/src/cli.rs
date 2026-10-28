@@ -10,6 +10,9 @@ use swarm_daemon::{repo as daemon_repo, Client};
 use swarm_store::git::{self, Git};
 use swarm_store::{keyio, Home};
 
+mod repo;
+use repo::resolve_repo;
+
 #[derive(Parser)]
 #[command(name = "swarm", version, about = "Zero-setup peer-to-peer git")]
 struct Cli {
@@ -41,6 +44,30 @@ enum Cmd {
         #[arg(long)]
         json: bool,
         repo: Option<String>,
+    },
+    /// Sync a repo and keep serving it.
+    Seed {
+        /// A `swarm://` link, optionally with hints.
+        link: String,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop serving a repo but keep its store.
+    Unseed {
+        /// A repo ID or link.
+        link: String,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create an independent repo from another one.
+    Fork {
+        /// The source link, optionally with hints.
+        link: String,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
     },
     /// Key management.
     Key {
@@ -84,7 +111,10 @@ fn remote_code(code: &str) -> i32 {
     match code {
         "no_peers" => 3,
         "no_signing_key" => 4,
-        "too_large"
+        "auth_failed"
+        | "pq_handshake"
+        | "pack_invalid"
+        | "too_large"
         | "non_canonical"
         | "malformed"
         | "bad_version"
@@ -112,48 +142,6 @@ fn client_code(err: &ClientError) -> i32 {
         ClientError::Remote(remote) => remote_code(&remote.code),
         _ => 1,
     }
-}
-
-async fn current_repo() -> Option<RepoId> {
-    let cwd = std::env::current_dir().ok()?;
-    let url = Git::worktree(&cwd)
-        .output(&["remote", "get-url", "swarm"])
-        .await
-        .ok()?;
-    Link::parse(url.trim()).ok().map(|link| link.repo)
-}
-
-async fn resolve_repo(value: Option<String>) -> Result<RepoId, i32> {
-    if let Some(value) = value {
-        return parse_repo(&value).map_err(|err| {
-            eprintln!("swarm: {err}");
-            2
-        });
-    }
-    if let Some(repo) = current_repo().await {
-        return Ok(repo);
-    }
-    let home = Home::resolve().map_err(|err| {
-        eprintln!("swarm: {err}");
-        1
-    })?;
-    let mut client = Client::connect(home).await.map_err(|err| {
-        eprintln!("swarm: {err}");
-        client_code(&err)
-    })?;
-    let repos = client.call("list_repos", json!({})).await.map_err(|err| {
-        eprintln!("swarm: {err}");
-        client_code(&err)
-    })?;
-    let Some(items) = repos.as_array() else {
-        return Err(1);
-    };
-    if items.len() == 1 {
-        let value = items[0].get("repo").and_then(Value::as_str).ok_or(1)?;
-        return parse_repo(value).map_err(|_| 1);
-    }
-    eprintln!("swarm: specify a repo");
-    Err(2)
 }
 
 async fn init(object_format: Option<String>, json_output: bool) -> i32 {
@@ -258,13 +246,166 @@ async fn link(repo: Option<String>, json_output: bool) -> i32 {
         Ok(repo) => repo,
         Err(code) => return code,
     };
-    let link = format!("swarm://{}", repo.to_base32());
+    let home = match Home::resolve() {
+        Ok(home) => home,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 1;
+        }
+    };
+    let mut client = match Client::connect(home).await {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return client_code(&err);
+        }
+    };
+    let hello = match client.call("hello", json!({})).await {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return client_code(&err);
+        }
+    };
+    let port = hello.get("port").and_then(Value::as_u64).unwrap_or(0);
+    let listen = hello
+        .get("listen")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<std::net::SocketAddr>().ok());
+    let node = hello
+        .get("node_id")
+        .and_then(Value::as_str)
+        .and_then(|value| swarm_core::ids::NodeId::from_base32(value).ok());
+    let link = match (listen, node) {
+        (Some(listen), Some(node)) if port != 0 => {
+            swarm_daemon::net::link_with_hint(repo, listen, node, None).to_string()
+        }
+        _ => format!("swarm://{}", repo.to_base32()),
+    };
     if json_output {
         println!("{}", json!({ "link": link }));
     } else {
         println!("{link}");
     }
     0
+}
+
+fn parse_link(value: &str) -> Result<(RepoId, Vec<String>), String> {
+    if value.starts_with("swarm://") {
+        let link = Link::parse(value).map_err(|err| err.to_string())?;
+        let hints = link
+            .hints
+            .iter()
+            .map(|hint| hint.to_string().trim_start_matches("h=").to_string())
+            .collect();
+        Ok((link.repo, hints))
+    } else {
+        Ok((parse_repo(value)?, Vec::new()))
+    }
+}
+
+async fn with_client<F>(action: F) -> i32
+where
+    F: std::future::Future<Output = Result<i32, ClientError>>,
+{
+    let _home = match Home::resolve() {
+        Ok(home) => home,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 1;
+        }
+    };
+    match action.await {
+        Ok(code) => code,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            client_code(&err)
+        }
+    }
+}
+
+async fn seed(link: &str, json_output: bool) -> i32 {
+    let (repo, hints) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let synced = client
+            .call("sync", json!({ "repo": repo.to_base32(), "hints": hints }))
+            .await?;
+        let seeded = client
+            .call("seed", json!({ "repo": repo.to_base32() }))
+            .await?;
+        if json_output {
+            println!(
+                "{}",
+                json!({ "repo": repo.to_base32(), "sync": synced, "seed": seeded })
+            );
+        } else {
+            println!("swarm://{}", repo.to_base32());
+        }
+        Ok(0)
+    })
+    .await
+}
+
+async fn unseed(link: &str, json_output: bool) -> i32 {
+    let (repo, _) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call("unseed", json!({ "repo": repo.to_base32() }))
+            .await?;
+        if json_output {
+            println!("{}", json!({ "repo": repo.to_base32(), "unseed": result }));
+        } else {
+            println!("swarm://{}", repo.to_base32());
+        }
+        Ok(0)
+    })
+    .await
+}
+
+async fn fork(link: &str, json_output: bool) -> i32 {
+    let (repo, hints) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call("fork", json!({ "repo": repo.to_base32(), "hints": hints }))
+            .await?;
+        if json_output {
+            println!("{}", result);
+        } else {
+            println!(
+                "{}",
+                result
+                    .get("link")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            );
+        }
+        Ok(0)
+    })
+    .await
 }
 
 async fn status(json_output: bool, repo: Option<String>) -> i32 {
@@ -429,6 +570,9 @@ pub async fn run(args: Vec<String>) -> i32 {
         } => init(object_format, json).await,
         Cmd::Link { json, repo } => link(repo, json).await,
         Cmd::Status { json, repo } => status(json, repo).await,
+        Cmd::Seed { link, json } => seed(&link, json).await,
+        Cmd::Unseed { link, json } => unseed(&link, json).await,
+        Cmd::Fork { link, json } => fork(&link, json).await,
         Cmd::Key {
             command: KeyCmd::Backup { repo, output },
         } => key_backup(&repo, &output),

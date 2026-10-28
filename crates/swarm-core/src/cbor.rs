@@ -22,6 +22,10 @@ pub enum Value {
     Text(String),
     /// Array.
     Array(Vec<Value>),
+    /// Boolean.
+    Bool(bool),
+    /// Null, used by wire messages only.
+    Null,
     /// Map. Entries are sorted by the encoded key when encoding.
     Map(Vec<(Value, Value)>),
 }
@@ -138,6 +142,9 @@ fn encode_value(value: &Value, out: &mut Vec<u8>) -> Result<(), CborError> {
                 encode_value(item, out)?;
             }
         }
+        Value::Bool(false) => out.push(0xf4),
+        Value::Bool(true) => out.push(0xf5),
+        Value::Null => out.push(0xf6),
         Value::Map(entries) => {
             encode_head(
                 5,
@@ -185,6 +192,8 @@ fn from_ciborium(value: ciborium::Value) -> Result<Value, CborError> {
             .map(from_ciborium)
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
+        ciborium::Value::Bool(value) => Ok(Value::Bool(value)),
+        ciborium::Value::Null => Ok(Value::Null),
         ciborium::Value::Map(entries) => entries
             .into_iter()
             .map(|(key, value)| Ok((from_ciborium(key)?, from_ciborium(value)?)))

@@ -2,25 +2,29 @@
 
 use std::fs::File;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use tokio::sync::Notify;
 
 use swarm_store::{Db, Home};
 
+use crate::net::NetState;
+
 /// State shared by every IPC connection.
 pub struct DaemonState {
     /// Data directory.
     pub home: Home,
     /// Sqlite handle, serialized by a mutex.
-    pub db: Mutex<Db>,
+    pub db: Arc<Mutex<Db>>,
     /// Signals the accept loop to stop.
     pub shutdown: Notify,
     /// Number of connected IPC clients.
     pub active_clients: AtomicUsize,
     /// Last request time, used by DMN-6.
     pub last_activity: Mutex<Instant>,
+    /// Network state once the listener is ready.
+    net: OnceLock<Arc<NetState>>,
     /// Held for the process lifetime to enforce one daemon per home.
     _lock: File,
 }
@@ -28,15 +32,27 @@ pub struct DaemonState {
 impl DaemonState {
     /// Build state from an already-locked file.
     #[must_use]
-    pub fn new(home: Home, db: Db, lock: File) -> Self {
+    pub fn new(home: Home, db: Arc<Mutex<Db>>, lock: File) -> Self {
         Self {
             home,
-            db: Mutex::new(db),
+            db,
             shutdown: Notify::new(),
             active_clients: AtomicUsize::new(0),
             last_activity: Mutex::new(Instant::now()),
+            net: OnceLock::new(),
             _lock: lock,
         }
+    }
+
+    /// Install the network state.
+    pub fn set_net(&self, net: Arc<NetState>) {
+        let _ = self.net.set(net);
+    }
+
+    /// Network state, present after startup.
+    #[must_use]
+    pub fn net(&self) -> Option<&Arc<NetState>> {
+        self.net.get()
     }
 
     /// Mark activity for the idle timer.

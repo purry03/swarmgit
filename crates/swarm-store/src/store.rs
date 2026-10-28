@@ -69,6 +69,11 @@ impl RepoStore {
     pub async fn create(&self, object_format: &str) -> Result<(), StoreError> {
         fs::create_dir_all(self.manifests_dir())?;
         git::init_bare(&self.store_path(), object_format).await?;
+        self.configure().await
+    }
+
+    /// Apply the required git configuration to an existing store.
+    pub async fn configure(&self) -> Result<(), StoreError> {
         let store = self.git();
         for (key, value) in [
             ("uploadpack.allowAnySHA1InWant", "true"),
@@ -93,6 +98,15 @@ impl RepoStore {
         let signer = hex::encode(stored.manifest.signer);
         let path = self.manifests_dir().join(format!("{signer}.cbor"));
         keyio::write_private_replace(&path, &stored.envelope)
+    }
+
+    /// Write every accepted manifest to disk (5.4 step 8).
+    pub fn persist_state(&self, state: &AcceptState) -> Result<(), StoreError> {
+        fs::create_dir_all(self.manifests_dir())?;
+        for stored in state.signers.values() {
+            self.write_manifest(stored)?;
+        }
+        Ok(())
     }
 
     /// Remove temporary manifests left by an interrupted write.

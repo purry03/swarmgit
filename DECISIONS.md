@@ -236,3 +236,68 @@ DMN-6 exits after 30 idle minutes when no repo is seeded. M1 seeds the repo
 created by `init`, so the timer rarely fires, and the e2e test uses a normal
 short run. `SWARM_IDLE_EXIT_MINUTES` overrides the default for tests and
 manual experiments without adding `config.toml` parsing early.
+
+## M2 decisions
+
+### Phase B and C live inside the Noise frames
+
+`PqInit`, `PqResp` and `PqAuth` are ordinary logical messages protected by the
+Phase A transport, not a second transport. This keeps one length-prefix format
+for the whole handshake, makes a dump of the socket show no recognizable
+ML-KEM structure, and lets the session actor switch to ChaCha20-Poly1305 keys
+only after `PqAuth` has been checked. `PqAuth` is deliberately the first frame
+under the new keys: no application message can precede authentication.
+
+### One pin source, deduped by address
+
+Hints, the `peers` table and `Peers` replies all produce the same `Candidate`.
+`dedupe` merges candidates with the same socket address and prefers a cached
+node ID over an unpinned hint. That is the trust-on-first-use rule from NET-11
+without a second code path. A failed pin is recorded as a peer failure and the
+address is not retried for the same sync.
+
+### `swarm link` prints exactly one hint
+
+The M1 acceptance block captures `swarm link` into a shell variable and also
+uses it after `?`. Printing one `h=tcp:host:port@node` hint keeps that block
+running under `git clone` without shell quoting tricks. Extra cached peers are
+still used by `sync`; they are not printed.
+
+### A failed pack moves to the next session
+
+`sync_repo` marks a session failed on a bad pack, a timeout or a connection
+error, then loops while missing objects remain and picks another session. This
+is what makes the kill-mid-pack test pass when a second seeder holds the data.
+If every session has failed it returns `pack_invalid`; a single peer error is
+returned unchanged.
+
+### Publish is local; pulls choose the peer explicitly
+
+`git push` copies objects and refs into the **local** daemon store and then
+publishes there. The remote URL is used for the pre-push sync, not as the
+publication target. A pull therefore has to point at whichever peer holds the
+new manifest. The guide shows both an explicit `git fetch <peer-link>` and a
+second remote, which is honest about the model and works without waiting for
+the five-minute seeded sync.
+
+### `git pull` needs `--no-rebase` on git 2.39
+
+The helper advertises the `HEAD` symref so `git clone` can pick the default
+branch. On git 2.39 that makes a plain `git pull` see divergent branches. The
+documented form is `git pull --no-rebase`, or `git fetch` followed by
+`git merge --ff-only FETCH_HEAD`; both are exercised by the scripts.
+
+### Two peers run from a dedicated image
+
+`Dockerfile.peers` builds the binary in a builder stage and copies it to a slim
+runtime with git. The compose services share a private network, set
+`SWARM_ADVERTISE` to their network alias, and keep `/state` in named volumes.
+This is the same binary and the same hint format as a real deployment; only
+the DNS name and the volume differ.
+
+### Packet capture in an unprivileged dev container
+
+The development image runs as uid 1000, so `cap_add` alone does not give
+`tcpdump` an effective `CAP_NET_RAW`. `Dockerfile.dev` installs
+`libcap2-bin` and sets file capabilities on `/usr/bin/tcpdump`, which keeps the
+test run unprivileged while still allowing the interest-token capture.

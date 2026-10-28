@@ -9,9 +9,11 @@
 pub mod client;
 pub mod daemon;
 pub mod handlers;
+pub mod net;
 pub mod protocol;
 pub mod repo;
 pub mod state;
+pub mod sync;
 
 pub use client::{call, Client, ClientError};
 pub use protocol::IpcError;

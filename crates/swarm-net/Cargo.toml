@@ -1,0 +1,22 @@
+[package]
+name = "swarm-net"
+description = "Swarmgit encrypted transport: Noise phase A, hybrid PQ phase B, node auth and wire messages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chacha20poly1305.workspace = true
+snow.workspace = true
+swarm-core = { path = "../swarm-core" }
+thiserror.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

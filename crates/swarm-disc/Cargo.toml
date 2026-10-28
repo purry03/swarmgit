@@ -1,0 +1,17 @@
+[package]
+name = "swarm-disc"
+description = "Swarmgit discovery routes. M2 provides link hints only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+swarm-core = { path = "../swarm-core" }
+swarm-net = { path = "../swarm-net" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

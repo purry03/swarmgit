@@ -22,6 +22,7 @@ swarm status --json | jq -e '.repos[0].seq == 2'                   # still 2, pu
 
 cd "$SRC"
 REPO_ID=${ID#swarm://}
+REPO_ID=${REPO_ID%%\?*}
 KEY="$SWARM_HOME/keys/$REPO_ID.key"
 
 echo "== a second swarm init fails with exit 1"

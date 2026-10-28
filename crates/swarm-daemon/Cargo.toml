@@ -14,10 +14,16 @@ hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 swarm-core = { path = "../swarm-core" }
+swarm-disc = { path = "../swarm-disc" }
+swarm-net = { path = "../swarm-net" }
 swarm-store = { path = "../swarm-store" }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+swarm-testpeer = { path = "../swarm-testpeer" }
+tempfile.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

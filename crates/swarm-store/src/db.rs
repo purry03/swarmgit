@@ -65,6 +65,19 @@ pub struct EquivocationRow {
     pub seen: i64,
 }
 
+/// One row of the `peers` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PeerRow {
+    /// TCP address text.
+    pub addr: String,
+    /// Last authenticated node ID.
+    pub node_id: Option<[u8; 32]>,
+    /// Last successful contact.
+    pub last_ok: Option<i64>,
+    /// Consecutive failures.
+    pub fails: u32,
+}
+
 /// A sqlite handle. Callers serialize access with a mutex.
 pub struct Db {
     conn: Connection,
@@ -303,6 +316,98 @@ impl Db {
             |row| row.get(0),
         )?;
         Ok(count as usize)
+    }
+
+    /// Cached peers for a repo, best first.
+    pub fn peers(&self, repo: RepoId) -> Result<Vec<PeerRow>, StoreError> {
+        let mut statement = self.conn.prepare(
+            "SELECT addr, node_id, last_ok, fails FROM peers WHERE repo = ?1
+             ORDER BY fails, last_ok DESC",
+        )?;
+        let rows = statement.query_map(params![&repo.as_bytes()[..]], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<Vec<u8>>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (addr, node_id, last_ok, fails) = row?;
+            out.push(PeerRow {
+                addr,
+                node_id: match node_id {
+                    Some(bytes) => Some(blob32(&bytes)?),
+                    None => None,
+                },
+                last_ok,
+                fails: fails as u32,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Stored node ID for one address, used as a pin (NET-11).
+    pub fn peer_node(&self, repo: RepoId, addr: &str) -> Result<Option<[u8; 32]>, StoreError> {
+        let value = self
+            .conn
+            .query_row(
+                "SELECT node_id FROM peers WHERE repo = ?1 AND addr = ?2",
+                params![&repo.as_bytes()[..], addr],
+                |row| row.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?;
+        match value {
+            Some(Some(bytes)) => Ok(Some(blob32(&bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Record a successful contact and keep the node ID as a pin.
+    pub fn record_peer_ok(
+        &self,
+        repo: RepoId,
+        addr: &str,
+        node_id: &[u8; 32],
+        when: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO peers(repo, addr, node_id, last_ok, fails) VALUES(?1, ?2, ?3, ?4, 0)
+             ON CONFLICT(repo, addr) DO UPDATE SET
+               node_id = excluded.node_id, last_ok = excluded.last_ok, fails = 0",
+            params![&repo.as_bytes()[..], addr, &node_id[..], when],
+        )?;
+        Ok(())
+    }
+
+    /// Record a failure, deleting the peer after eight in a row (DM-4).
+    pub fn record_peer_fail(&self, repo: RepoId, addr: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO peers(repo, addr, node_id, last_ok, fails) VALUES(?1, ?2, NULL, NULL, 1)
+             ON CONFLICT(repo, addr) DO UPDATE SET fails = fails + 1",
+            params![&repo.as_bytes()[..], addr],
+        )?;
+        self.conn.execute(
+            "DELETE FROM peers WHERE repo = ?1 AND addr = ?2 AND fails >= 8",
+            params![&repo.as_bytes()[..], addr],
+        )?;
+        Ok(())
+    }
+
+    /// Create a repo row when it does not exist yet.
+    pub fn ensure_repo(
+        &self,
+        id: RepoId,
+        object_format: &str,
+        created: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO repos(id, object_format, seeding, created, last_sync)
+             VALUES(?1, ?2, 0, ?3, NULL)",
+            params![&id.as_bytes()[..], object_format, created],
+        )?;
+        Ok(())
     }
 }
 

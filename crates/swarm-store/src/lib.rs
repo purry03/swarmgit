@@ -14,7 +14,7 @@ use swarm_core::error::ErrorCode;
 use swarm_core::keyfile::KeyFileError;
 use thiserror::Error;
 
-pub use db::{Db, RepoRow};
+pub use db::{Db, PeerRow, RepoRow};
 pub use home::Home;
 pub use store::RepoStore;
 

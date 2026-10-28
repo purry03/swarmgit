@@ -1,7 +1,6 @@
 //! Repo operations behind the IPC commands: init, sync, publish and status.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -13,7 +12,7 @@ use swarm_core::keyfile::RepoKey;
 use swarm_core::manifest::Manifest;
 use swarm_core::refname::is_valid_refname;
 use swarm_store::git::{self, Git};
-use swarm_store::{Home, RepoStore};
+use swarm_store::RepoStore;
 
 use crate::protocol::IpcError;
 use crate::state::DaemonState;
@@ -43,6 +42,19 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, IpcError> {
     args.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| IpcError::new("malformed", format!("missing argument {key}")))
+}
+
+fn arg_hints(args: &Value) -> Vec<String> {
+    args.get("hints")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn db_repo(state: &DaemonState, repo: RepoId) -> Result<swarm_store::RepoRow, IpcError> {
@@ -157,46 +169,49 @@ pub async fn init_repo(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
     store.apply_canonical(&resolved.canonical).await?;
 
     let base32 = repo.to_base32();
+    let link = match state.net() {
+        Some(net) => crate::net::link_with_hint(repo, net.listen, net.node_id, None).to_string(),
+        None => format!("swarm://{base32}"),
+    };
     Ok(json!({
         "repo_id": base32,
-        "link": format!("swarm://{base32}"),
+        "link": link,
         "object_format": object_format,
         "seq": 1,
     }))
 }
 
-/// `sync`: local-only resolve at M1. No network route exists yet.
+/// `sync`: link-hint sync plus cached peers, then a local resolve fallback.
 pub async fn sync(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
     let repo = parse_repo(arg_str(args, "repo")?)?;
-    let row = db_repo(state, repo)?;
-    let store = RepoStore::new(state.home.clone(), repo);
-    if !store.exists() {
-        return Err(IpcError::new("unknown_repo", "store does not exist"));
-    }
-    let accepted = store.load_state()?;
-    let resolved = store.resolve(&accepted);
-    store.apply_canonical(&resolved.canonical).await?;
-    {
-        let db = state
-            .db
-            .lock()
-            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-        db.set_last_sync(repo, now())?;
-    }
-    let ref_list: serde_json::Map<String, Value> = resolved
-        .canonical
+    let hints = arg_hints(args);
+    let net = state
+        .net()
+        .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
+    let outcome = crate::sync::sync_repo(net, repo, hints)
+        .await
+        .map_err(net_error)?;
+    let ref_list: serde_json::Map<String, Value> = outcome
+        .ref_list
         .iter()
         .map(|(name, oid)| (name.clone(), Value::String(oid.to_hex())))
         .collect();
     Ok(json!({
-        "state": "fresh",
-        "refs": resolved.canonical.len(),
+        "state": outcome.state,
+        "refs": outcome.refs(),
         "ref_list": ref_list,
-        "head": resolved.head,
-        "seq": root_seq(&accepted, repo),
-        "store_path": store.store_path().to_string_lossy(),
-        "object_format": row.object_format,
+        "head": outcome.head,
+        "seq": outcome.seq,
+        "store_path": outcome.store_path.to_string_lossy(),
+        "object_format": outcome.object_format,
+        "peers": outcome.peers,
+        "accepted": outcome.accepted,
+        "rejected": outcome.rejected,
     }))
+}
+
+fn net_error(err: swarm_net::NetError) -> IpcError {
+    IpcError::new(err.code(), err.to_string())
 }
 
 struct RootFields {
@@ -371,6 +386,9 @@ pub async fn publish(state: &DaemonState, args: &Value) -> Result<Value, IpcErro
     }
     let resolved = store.resolve(&accepted);
     store.apply_canonical(&resolved.canonical).await?;
+    if let Some(net) = state.net() {
+        net.announce(repo, stored.envelope.clone()).await;
+    }
 
     Ok(json!({
         "seq": seq,
@@ -485,19 +503,91 @@ pub async fn set_seeding(
     Ok(json!({ "seeding": seeding }))
 }
 
-/// Resolve a link or repo string to a key file, used by `swarm key backup`.
-pub fn key_path(home: &Home, repo: RepoId) -> PathBuf {
-    home.repo_key_path(repo)
-}
+/// `fork`: create an independent repo from another one (section 8.4).
+pub async fn fork(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
+    let raw = arg_str(args, "repo")?;
+    let hints = arg_hints(args);
+    let source = parse_repo(raw)?;
+    let net = state
+        .net()
+        .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
+    let outcome = crate::sync::sync_repo(net, source, hints)
+        .await
+        .map_err(net_error)?;
+    let source_store = RepoStore::new(state.home.clone(), source);
+    if !source_store.exists() {
+        return Err(IpcError::new("unknown_repo", "source store does not exist"));
+    }
 
-/// Read a repo key for the CLI without going through IPC.
-pub fn load_key(home: &Home, repo: RepoId) -> Result<Option<RepoKey>, IpcError> {
-    let store = RepoStore::new(home.clone(), repo);
-    Ok(store.load_key()?)
-}
+    let key = RepoKey::generate(SUITE_HYBRID)
+        .map_err(|err| IpcError::new("bad_keys", err.to_string()))?;
+    let signer = key
+        .signer()
+        .map_err(|err| IpcError::new("bad_keys", err.to_string()))?;
+    let bundle = signer.bundle();
+    let repo = repo_id(&bundle);
+    let signer_id = key_id(&bundle);
+    let store = RepoStore::new(state.home.clone(), repo);
+    if store.exists() {
+        return Err(IpcError::new(
+            "malformed",
+            "the derived fork store already exists",
+        ));
+    }
+    git::clone_bare(&source_store.store_path(), &store.store_path())
+        .await
+        .map_err(|err| IpcError::new("malformed", err.to_string()))?;
+    store
+        .configure()
+        .await
+        .map_err(|err| IpcError::new("malformed", err.to_string()))?;
+    store.write_key(&key)?;
 
-/// Convert an `Oid` to a string for JSON output.
-#[must_use]
-pub fn oid_text(oid: &Oid) -> String {
-    oid.to_hex()
+    let manifest = Manifest {
+        version: 1,
+        repo_id: *repo.as_bytes(),
+        signer: *signer_id.as_bytes(),
+        seq: 1,
+        prev: [0u8; 32],
+        ts: now() as u64,
+        refs: outcome.ref_list.clone(),
+        head: outcome.head.clone(),
+        maintainers: None,
+        object_format: Some(outcome.object_format.clone()),
+        tombstones: None,
+        forked_from: Some(*source.as_bytes()),
+        recovery: None,
+        new_root: None,
+        signer_keys: bundle,
+        suite: u64::from(SUITE_HYBRID),
+    };
+    let envelope = manifest
+        .sign(&*signer)
+        .map_err(|err| IpcError::new(err.to_string(), err.to_string()))?;
+    let mut accepted = AcceptState::new(repo);
+    accepted
+        .accept(envelope.clone())
+        .map_err(|err| IpcError::new(err.to_string(), err.to_string()))?;
+    let stored = StoredManifest::from(envelope);
+    store.persist_state(&accepted)?;
+    {
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
+        db.insert_repo(repo, &outcome.object_format, now())?;
+        db.upsert_signer(repo, signer_id, 1, &stored.manifest_id)?;
+        db.set_seeding(repo, true)?;
+        db.set_last_sync(repo, now())?;
+    }
+    let resolved = store.resolve(&accepted);
+    store.apply_canonical(&resolved.canonical).await?;
+    let link = crate::net::link_with_hint(repo, net.listen, net.node_id, None).to_string();
+    Ok(json!({
+        "repo_id": repo.to_base32(),
+        "link": link,
+        "forked_from": source.to_base32(),
+        "object_format": outcome.object_format,
+        "seq": 1,
+    }))
 }

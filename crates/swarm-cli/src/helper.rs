@@ -27,6 +27,7 @@ struct Listing {
 struct Helper {
     client: Client,
     repo: RepoId,
+    hints: Vec<String>,
     verbosity: u64,
 }
 
@@ -38,6 +39,17 @@ fn repo_from_url(url: &str) -> Result<RepoId, String> {
     } else {
         daemon_repo::parse_repo(url).map_err(|err| err.msg)
     }
+}
+
+fn hints_from_url(url: &str) -> Vec<String> {
+    swarm_core::ids::Link::parse(url)
+        .map(|link| {
+            link.hints
+                .iter()
+                .map(|hint| hint.to_string().trim_start_matches("h=").to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn fail(code: i32) -> ! {
@@ -53,10 +65,11 @@ async fn write_line(text: &str) {
 }
 
 impl Helper {
-    fn new(client: Client, repo: RepoId) -> Self {
+    fn new(client: Client, repo: RepoId, hints: Vec<String>) -> Self {
         Self {
             client,
             repo,
+            hints,
             verbosity: 1,
         }
     }
@@ -70,7 +83,10 @@ impl Helper {
     async fn sync(&mut self) -> Result<Listing, ClientError> {
         let value = self
             .client
-            .call("sync", json!({ "repo": self.repo.to_base32() }))
+            .call(
+                "sync",
+                json!({ "repo": self.repo.to_base32(), "hints": self.hints }),
+            )
             .await?;
         let store_path = value
             .get("store_path")
@@ -254,6 +270,7 @@ pub async fn run(args: Vec<String>) -> i32 {
             return 2;
         }
     };
+    let hints = hints_from_url(&url);
     let home = match Home::resolve() {
         Ok(home) => home,
         Err(err) => {
@@ -268,7 +285,7 @@ pub async fn run(args: Vec<String>) -> i32 {
             return 1;
         }
     };
-    let mut helper = Helper::new(client, repo);
+    let mut helper = Helper::new(client, repo, hints);
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
     let mut fetches: Vec<String> = Vec::new();

@@ -71,6 +71,9 @@ fn swarm_binary() -> Result<std::path::PathBuf, ClientError> {
 
 fn spawn_daemon(home: &Home) -> Result<(), ClientError> {
     let exe = swarm_binary()?;
+    std::fs::create_dir_all(home.root()).map_err(|err| {
+        ClientError::Unreachable(format!("cannot create {}: {err}", home.root().display()))
+    })?;
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

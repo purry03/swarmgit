@@ -21,9 +21,13 @@ RUN apt-get update \
       python3 python3-pip python3-venv \
       curl ca-certificates \
       iproute2 util-linux procps \
-      tcpdump netcat-openbsd socat \
+      tcpdump netcat-openbsd socat libcap2-bin \
       sqlite3 iptables nftables \
  && rm -rf /var/lib/apt/lists/*
+
+# `dev` is unprivileged, so tcpdump needs file capabilities to capture in the
+# e2e tests. The compose file already adds NET_RAW and NET_ADMIN.
+RUN setcap cap_net_raw,cap_net_admin+eip /usr/bin/tcpdump
 
 # Stable components, nightly for cargo-fuzz, and the tools the spec's CI uses.
 RUN rustup component add rustfmt clippy \

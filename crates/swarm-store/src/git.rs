@@ -128,6 +128,49 @@ impl Git {
         self.run(&["cat-file", "-e", &oid.to_hex()]).await.is_ok()
     }
 
+    /// Return only the object IDs that exist here (WANT-2).
+    pub async fn filter_existing(&self, oids: &[Oid]) -> Result<Vec<Oid>, StoreError> {
+        if oids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let prefix = self.prefix();
+        let mut command = Command::new("git");
+        command.args(&prefix);
+        command.args(["cat-file", "--batch-check=%(objectname)"]);
+        command.stdin(Stdio::piped());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::null());
+        let mut child = command.spawn()?;
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| StoreError::Git("cat-file has no stdin".into()))?;
+            for oid in oids {
+                stdin.write_all(oid.to_hex().as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+            }
+            stdin.shutdown().await?;
+        }
+        let output = child.wait_with_output().await?;
+        if !output.status.success() {
+            return Err(StoreError::Git("git cat-file failed".into()));
+        }
+        let mut out = Vec::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            // Missing objects print "<oid> missing"; existing ones print only
+            // the object name because of the custom format.
+            let text = line.trim();
+            if text.len() == 40 || text.len() == 64 {
+                if let Ok(bytes) = hex::decode(text) {
+                    out.push(Oid::new(bytes));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Fetch refs from another local repository.
     pub async fn fetch_from(&self, source: &Path, refspecs: &[String]) -> Result<(), StoreError> {
         let source = source.to_string_lossy().into_owned();
@@ -148,10 +191,26 @@ impl Git {
 
     /// Build a pack for the given tips and return it on stdout (spec 8.2).
     pub async fn pack_objects(&self, wants: &[Oid], haves: &[Oid]) -> Result<Vec<u8>, StoreError> {
+        self.pack_objects_limited(wants, haves, usize::MAX).await
+    }
+
+    /// Build a pack, rejecting output above `max_bytes`.
+    pub async fn pack_objects_limited(
+        &self,
+        wants: &[Oid],
+        haves: &[Oid],
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, StoreError> {
         let prefix = self.prefix();
         let mut command = Command::new("git");
         command.args(&prefix);
-        command.args(["pack-objects", "--stdout", "--revs"]);
+        command.args([
+            "pack-objects",
+            "--stdout",
+            "--revs",
+            "--thin",
+            "--delta-base-offset",
+        ]);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
@@ -175,6 +234,9 @@ impl Git {
         }
         let output = child.wait_with_output().await?;
         if output.status.success() {
+            if output.stdout.len() > max_bytes {
+                return Err(StoreError::Core(swarm_core::ErrorCode::LimitExceeded));
+            }
             Ok(output.stdout)
         } else {
             Err(StoreError::Git(format!(
@@ -184,27 +246,57 @@ impl Git {
         }
     }
 
-    /// Index a pack from bytes with `--stdin --fix-thin --strict` (SEC-7, SEC-8).
+    /// Index a pack from bytes with `--stdin --fix-thin --strict` (SEC-6).
     pub async fn index_pack(&self, pack: &[u8]) -> Result<String, StoreError> {
-        let prefix = self.prefix();
-        let mut command = Command::new("git");
-        command.args(&prefix);
-        command.args(["index-pack", "--stdin", "--fix-thin", "--strict"]);
-        command.stdin(Stdio::piped());
-        command.stdout(Stdio::piped());
-        command.stderr(Stdio::piped());
-        let mut child = command.spawn()?;
-        {
-            use tokio::io::AsyncWriteExt;
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| StoreError::Git("index-pack has no stdin".into()))?;
-            stdin.write_all(pack).await?;
-            stdin.shutdown().await?;
+        self.index_pack_limited(pack, usize::MAX).await
+    }
+
+    /// Index a pack with an explicit input cap.
+    pub async fn index_pack_limited(
+        &self,
+        pack: &[u8],
+        max_bytes: usize,
+    ) -> Result<String, StoreError> {
+        // `--max-input-size` exists in newer git; older releases reject it.
+        // We already cap the bytes in memory, so retry without the flag when
+        // the installed git does not know it (SEC-6).
+        let limit = format!("--max-input-size={max_bytes}");
+        for attempt in 0..2 {
+            let mut args = vec!["index-pack", "--stdin", "--fix-thin", "--strict"];
+            if attempt == 0 && max_bytes != usize::MAX {
+                args.push(limit.as_str());
+            }
+            let prefix = self.prefix();
+            let mut command = Command::new("git");
+            command.args(&prefix);
+            command.args(&args);
+            command.stdin(Stdio::piped());
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
+            let mut child = command.spawn()?;
+            {
+                use tokio::io::AsyncWriteExt;
+                let mut stdin = child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| StoreError::Git("index-pack has no stdin".into()))?;
+                stdin.write_all(pack).await?;
+                stdin.shutdown().await?;
+            }
+            let output = child.wait_with_output().await?;
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if attempt == 0 && stderr.contains("max-input-size") {
+                continue;
+            }
+            return Err(StoreError::Git(format!(
+                "git index-pack failed: {}",
+                stderr.trim()
+            )));
         }
-        let output = child.wait_with_output().await?;
-        finish(output, "git index-pack").await
+        Err(StoreError::Git("git index-pack failed".into()))
     }
 }
 
@@ -224,6 +316,19 @@ pub async fn init_bare(path: &Path, object_format: &str) -> Result<(), StoreErro
     .output()
     .await?;
     finish(output, "git init").await.map(|_| ())
+}
+
+/// Clone a bare store's objects into a new bare store (section 8.4).
+pub async fn clone_bare(source: &Path, dest: &Path) -> Result<(), StoreError> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let source = source.to_string_lossy().into_owned();
+    let dest = dest.to_string_lossy().into_owned();
+    let output = command(&["clone", "--bare", "--no-hardlinks", &source, &dest])
+        .output()
+        .await?;
+    finish(output, "git clone --bare").await.map(|_| ())
 }
 
 /// Object format of a worktree (`sha1` or `sha256`).

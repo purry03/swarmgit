@@ -26,7 +26,9 @@ async fn dispatch(state: &DaemonState, request: &Request) -> Result<Value, IpcEr
         "hello" => Ok(json!({
             "daemon_version": env!("CARGO_PKG_VERSION"),
             "home": state.home.root().to_string_lossy(),
-            "port": 0,
+            "port": state.net().map(|net| net.listen.port()).unwrap_or(0),
+            "listen": state.net().map(|net| net.listen.to_string()).unwrap_or_default(),
+            "node_id": state.net().map(|net| net.node_id.to_base32()).unwrap_or_default(),
         })),
         "init_repo" => repo::init_repo(state, args).await,
         "sync" => repo::sync(state, args).await,
@@ -36,6 +38,7 @@ async fn dispatch(state: &DaemonState, request: &Request) -> Result<Value, IpcEr
         "status" => repo::status(state, args).await,
         "seed" => repo::set_seeding(state, args, true).await,
         "unseed" => repo::set_seeding(state, args, false).await,
+        "fork" => repo::fork(state, args).await,
         "stop" => Ok(json!({ "stopped": true })),
         other => Err(IpcError::new(
             "malformed",

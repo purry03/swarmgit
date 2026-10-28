@@ -2,11 +2,10 @@
 
 use std::fs::{self, OpenOptions};
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fs2::FileExt;
-use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -14,18 +13,19 @@ use swarm_core::keyfile::NodeKey;
 use swarm_store::{keyio, Db, Home};
 
 use crate::handlers;
+use crate::net::{self, NetState};
 use crate::protocol::{Request, Response};
 use crate::state::DaemonState;
 
-async fn ensure_node_key(home: &Home) -> anyhow::Result<()> {
+async fn ensure_node_key(home: &Home) -> anyhow::Result<Arc<NodeKey>> {
     let path = home.node_key_path();
     if let Some(bytes) = keyio::read_private(&path)? {
-        let _ = NodeKey::from_bytes(&bytes)?;
-        return Ok(());
+        let key = NodeKey::from_bytes(&bytes)?;
+        return Ok(Arc::new(key));
     }
     let key = NodeKey::generate()?;
     keyio::write_private_new(&path, &key.to_bytes())?;
-    Ok(())
+    Ok(Arc::new(key))
 }
 
 fn acquire_lock(home: &Home) -> anyhow::Result<Option<std::fs::File>> {
@@ -40,14 +40,6 @@ fn acquire_lock(home: &Home) -> anyhow::Result<Option<std::fs::File>> {
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
         Err(err) => Err(err.into()),
     }
-}
-
-async fn write_daemon_json(home: &Home) -> anyhow::Result<()> {
-    let value = json!({ "port": 0, "pid": std::process::id() });
-    let mut bytes = serde_json::to_vec(&value)?;
-    bytes.push(b'\n');
-    fs::write(home.daemon_json_path(), bytes)?;
-    Ok(())
 }
 
 async fn handle_connection(state: Arc<DaemonState>, stream: UnixStream) {
@@ -162,15 +154,35 @@ async fn wait_for_clients(state: &DaemonState, timeout: Duration) {
     }
 }
 
+async fn seeded_sync_loop(state: Arc<DaemonState>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        let Some(net) = state.net().cloned() else {
+            continue;
+        };
+        let repos = {
+            let Ok(db) = net.db.lock() else {
+                continue;
+            };
+            db.repos().unwrap_or_default()
+        };
+        for row in repos.into_iter().filter(|row| row.seeding) {
+            if let Err(err) = crate::sync::sync_repo(&net, row.id, Vec::new()).await {
+                tracing::debug!(repo = %row.id.to_base32(), code = err.code(), error = %err, "seeded sync failed");
+            }
+        }
+    }
+}
+
 /// Run the daemon until stopped. A second instance exits successfully.
 pub async fn run(home: Home) -> anyhow::Result<()> {
     home.ensure()?;
     let Some(lock) = acquire_lock(&home)? else {
         return Ok(());
     };
-    ensure_node_key(&home).await?;
-    let db = Db::open(&home.db_path())?;
-    let state = Arc::new(DaemonState::new(home.clone(), db, lock));
+    let node = ensure_node_key(&home).await?;
+    let db = Arc::new(Mutex::new(Db::open(&home.db_path())?));
+    let state = Arc::new(DaemonState::new(home.clone(), Arc::clone(&db), lock));
 
     // DMN-5: open sqlite and clear temporary refs before serving.
     let existing = {
@@ -186,6 +198,29 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
         let _ = store.clean_temp_manifests();
     }
 
+    let (tcp_listener, listen_addr) = net::bind(net::configured_listen()).await?;
+    let net = NetState::new(
+        home.clone(),
+        Arc::clone(&db),
+        node,
+        listen_addr,
+        net::max_pack_bytes(),
+    )?;
+    state.set_net(Arc::clone(&net));
+    net::write_daemon_json(&home, listen_addr)?;
+    tracing::info!(
+        home = %home.root().display(),
+        listen = %listen_addr,
+        node = %net.node_id.to_hex(),
+        "peer listener started"
+    );
+    let peer_shutdown = Arc::new(tokio::sync::Notify::new());
+    {
+        let net = Arc::clone(&net);
+        let shutdown = Arc::clone(&peer_shutdown);
+        tokio::spawn(async move { net::serve::serve(net, tcp_listener, shutdown).await });
+    }
+
     let socket = home.socket_path();
     if socket.exists() {
         let _ = fs::remove_file(&socket);
@@ -199,13 +234,14 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
     }
-    write_daemon_json(&home).await?;
 
     tracing::info!(home = %home.root().display(), "daemon started");
     let accept_state = Arc::clone(&state);
     tokio::spawn(async move { signal_monitor(accept_state).await });
     let idle_state = Arc::clone(&state);
     tokio::spawn(async move { idle_monitor(idle_state).await });
+    let seeded_state = Arc::clone(&state);
+    tokio::spawn(async move { seeded_sync_loop(seeded_state).await });
 
     loop {
         tokio::select! {
@@ -227,6 +263,7 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
         }
     }
 
+    peer_shutdown.notify_waiters();
     wait_for_clients(&state, Duration::from_secs(5)).await;
     drop(listener);
     let _ = fs::remove_file(&socket);

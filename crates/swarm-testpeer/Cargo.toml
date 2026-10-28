@@ -1,0 +1,19 @@
+[package]
+name = "swarm-testpeer"
+description = "Hostile and honest test peers for the Swarmgit wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+swarm-core = { path = "../swarm-core" }
+swarm-net = { path = "../swarm-net" }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
