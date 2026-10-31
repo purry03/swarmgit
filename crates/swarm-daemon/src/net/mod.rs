@@ -5,7 +5,7 @@ pub mod serve;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use swarm_core::ids::{Hint, HintScheme, Host, NodeId, RepoId};
@@ -43,6 +43,7 @@ pub struct NetState {
     sessions: Mutex<Vec<Registered>>,
     next_session: AtomicU64,
     sync_locks: Mutex<HashMap<[u8; 32], Arc<tokio::sync::Mutex<()>>>>,
+    lan: OnceLock<Arc<swarm_disc::lan::LanService>>,
 }
 
 impl NetState {
@@ -66,7 +67,30 @@ impl NetState {
             sessions: Mutex::new(Vec::new()),
             next_session: AtomicU64::new(1),
             sync_locks: Mutex::new(HashMap::new()),
+            lan: OnceLock::new(),
         }))
+    }
+
+    /// Attach the running LAN route. Later calls are ignored.
+    pub fn set_lan(&self, lan: Arc<swarm_disc::lan::LanService>) {
+        let _ = self.lan.set(lan);
+    }
+
+    /// The LAN route, unless `SWARM_NO_LAN=1` or it failed to bind.
+    pub fn lan(&self) -> Option<Arc<swarm_disc::lan::LanService>> {
+        self.lan.get().cloned()
+    }
+
+    /// Every repo with a database row (LAN-1).
+    pub fn known_repos(&self) -> Vec<RepoId> {
+        let Ok(db) = self.db.lock() else {
+            return Vec::new();
+        };
+        db.repos()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| row.id)
+            .collect()
     }
 
     /// A per-repo lock that serializes sync (SYNC-5).

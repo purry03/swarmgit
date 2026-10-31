@@ -2,6 +2,48 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## M3 - LAN discovery (2026-11-24)
+
+### Added
+
+- `swarm-disc::lan`, route B of spec 6.3.
+  - `lan::packet` holds the pure parts: the `SWG1` packet encode and strict
+    decode (exact `8 + 16n` length, `n` from 1 to 16, at most 1200 bytes),
+    tokens for the previous, current and next hour, LAN-1 matching, and the
+    LAN-3 limiter of 20 packets per source per second.
+  - `lan::service` binds UDP 42099 with `socket2` and address/port reuse
+    (LAN-4, `SWARM_LAN_PORT` overrides it). It joins `239.255.42.99` on every
+    IPv4 interface and `ff02::4242` on every IPv6 interface with TTL and hop
+    limit 1. It announces seeded repos at start, every 60 s and right after
+    `init`, `fork` or `seed`; it sends a query burst at 0, 1 and 3 s when a
+    sync starts, and answers matching queries with a unicast announce (LAN-2).
+- The sync loop adds LAN candidates to hints and cached peers. When nothing
+  else connects it waits for LAN answers: up to `find_timeout` (30 s,
+  `SWARM_FIND_TIMEOUT` overrides it) for a repo with no state, or 3.5 s
+  otherwise before returning stale.
+- `swarm status --json` reports `lan.enabled` and `lan.port`.
+- `SWARM_NO_LAN=1` turns off only this route.
+- Fuzz target `lan_packet`: every accepted packet re-encodes to its input.
+- `scripts/ci.sh`, the milestone gate. It re-runs itself in the privileged
+  dev container as root, so the namespace test runs, and fails if any e2e
+  script prints SKIP.
+
+### Tests
+
+```sh
+cargo test -p swarm-disc                    # packet, magic, size, rate limit
+scripts/ci.sh                               # fmt, clippy, tests, all e2e (Docker)
+docker compose -f compose.yaml -f compose.privileged.yaml run --rm \
+    --user root -e SWARM_BIN_DIR=/workspace/target/docker/debug dev \
+    tests/e2e/lan.sh                        # needs a container build first
+(cd fuzz && cargo +nightly fuzz run lan_packet -- -max_total_time=60)
+```
+
+`tests/e2e/lan.sh` joins two network namespaces with a veth pair and gives
+them no default or multicast route. A pushes, then B clones and pulls
+`swarm://<repo>` with no hint. A tcpdump of UDP 42099 must show announces and
+queries and must not contain the repo ID as raw bytes, base32 or hex.
+
 ## M2 - encrypted transport and clone from a peer (2026-11-24)
 
 ### Added

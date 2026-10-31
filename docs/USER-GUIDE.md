@@ -207,7 +207,10 @@ the current state of an existing one. Its first manifest records
 | `SWARM_HOME` | Data directory. Defaults to `~/.swarm`. |
 | `SWARM_LISTEN` | Peer listen address, default `0.0.0.0:42424`. If busy, the port becomes ephemeral. |
 | `SWARM_ADVERTISE` | Host name or IP placed in `swarm link` hints. Set this behind NAT or in Docker. |
-| `SWARM_NO_DHT`, `SWARM_NO_LAN` | Disable discovery routes that do not exist yet; harmless at M2. |
+| `SWARM_NO_LAN` | `1` turns off LAN multicast discovery (UDP 42099, groups `239.255.42.99` and `ff02::4242`). Other routes keep working. |
+| `SWARM_LAN_PORT` | LAN discovery UDP port, default `42099`. |
+| `SWARM_FIND_TIMEOUT` | Seconds a first clone waits for LAN answers, default `30`. |
+| `SWARM_NO_DHT` | Disables the DHT route, which does not exist yet. |
 | `SWARM_MAX_PACK_BYTES` | Largest served or accepted pack, default 2 GiB. |
 | `SWARM_LOG` | Tracing filter for the daemon, default `info`. |
 | `SWARM_IDLE_EXIT_MINUTES` | Idle shutdown for an unseeded daemon, default 30. |
@@ -245,6 +248,13 @@ worktree with that repo.
 **`no_peers` / clone hangs** — check the hint host and port:
 `docker compose -f compose.peers.yaml exec peer-a ss -tlnp | grep 42424`.
 Inside the compose network use `a`/`b`, not `127.0.0.1`.
+
+**A hintless `swarm://<repo>` link finds nothing** — LAN discovery only reaches
+the same network segment (TTL 1) and needs UDP 42099 open on both peers. Check
+`swarm status --json` shows `"lan": {"enabled": true}`, that `SWARM_NO_LAN` is
+not set, and that the seeder has run `swarm seed` or pushed the repo. Wi-Fi with
+client isolation blocks it. Add a hint (`swarm link` prints one) if LAN
+is blocked.
 
 **`no signing key`** — copy the root key as shown in section 4. `swarm fork`
 also creates a repo you can push to.

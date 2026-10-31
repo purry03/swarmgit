@@ -168,6 +168,7 @@ pub async fn init_repo(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
     let resolved = store.resolve(&accepted);
     store.apply_canonical(&resolved.canonical).await?;
 
+    announce_lan(state);
     let base32 = repo.to_base32();
     let link = match state.net() {
         Some(net) => crate::net::link_with_hint(repo, net.listen, net.node_id, None).to_string(),
@@ -472,7 +473,19 @@ pub async fn status(state: &DaemonState, args: &Value) -> Result<Value, IpcError
     for row in &rows {
         repos.push(summary(state, row)?);
     }
-    Ok(json!({ "repos": repos }))
+    let lan = match state.net().map(|net| net.lan()) {
+        Some(Some(lan)) => json!({ "enabled": true, "port": lan.port() }),
+        _ => json!({ "enabled": false }),
+    };
+    Ok(json!({ "repos": repos, "lan": lan }))
+}
+
+/// Multicast a LAN announce now, so a new seed is found without waiting for
+/// the 60 s timer (6.3).
+fn announce_lan(state: &DaemonState) {
+    if let Some(lan) = state.net().and_then(|net| net.lan()) {
+        tokio::spawn(async move { lan.announce_now().await });
+    }
 }
 
 /// `list_repos`: the array form used by some clients.
@@ -499,6 +512,9 @@ pub async fn set_seeding(
             .lock()
             .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
         db.set_seeding(repo, seeding)?;
+    }
+    if seeding {
+        announce_lan(state);
     }
     Ok(json!({ "seeding": seeding }))
 }
@@ -582,6 +598,7 @@ pub async fn fork(state: &DaemonState, args: &Value) -> Result<Value, IpcError> 
     }
     let resolved = store.resolve(&accepted);
     store.apply_canonical(&resolved.canonical).await?;
+    announce_lan(state);
     let link = crate::net::link_with_hint(repo, net.listen, net.node_id, None).to_string();
     Ok(json!({
         "repo_id": repo.to_base32(),

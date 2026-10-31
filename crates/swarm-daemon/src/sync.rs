@@ -1,4 +1,4 @@
-//! Network sync loop (spec section 8.2) over link hints only.
+//! Network sync loop (spec section 8.2) over link hints, cached peers and LAN.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -102,6 +102,66 @@ fn dedupe(candidates: Vec<Candidate>, own: NodeId) -> Vec<Candidate> {
         out.push(candidate);
     }
     out
+}
+
+#[derive(Default)]
+struct Failures {
+    auth: bool,
+    no_shared: bool,
+}
+
+fn lan_candidates(lan: &swarm_disc::lan::LanService, repo: RepoId) -> Vec<Candidate> {
+    lan.candidates(repo)
+        .into_iter()
+        .map(|addr| Candidate {
+            addr: PeerAddr::Tcp(addr),
+            node: None,
+        })
+        .collect()
+}
+
+/// How long a sync waits for LAN answers when nothing else connected.
+fn lan_wait(has_state: bool) -> Duration {
+    if has_state {
+        return Duration::from_millis(3500);
+    }
+    std::env::var("SWARM_FIND_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .map_or(Duration::from_secs(30), Duration::from_secs)
+}
+
+async fn dial_all(
+    net: &NetState,
+    repo: RepoId,
+    candidates: Vec<Candidate>,
+    connected: &mut Vec<Connected>,
+    tried: &mut Vec<PeerAddr>,
+    failures: &mut Failures,
+) {
+    for candidate in candidates {
+        if connected.len() >= MAX_SESSIONS {
+            break;
+        }
+        if tried.contains(&candidate.addr) {
+            continue;
+        }
+        tried.push(candidate.addr.clone());
+        match dial(net, repo, &candidate).await {
+            Ok(peer) => connected.push(peer),
+            Err(err) => {
+                net.peer_fail(repo, &candidate.addr);
+                failures.auth |= matches!(err, NetError::AuthFailed(_));
+                failures.no_shared |= matches!(err, NetError::NoSharedRepo);
+                tracing::debug!(
+                    peer = %candidate.addr,
+                    code = err.code(),
+                    error = %err,
+                    "sync peer failed"
+                );
+            }
+        }
+    }
 }
 
 async fn dial(net: &NetState, repo: RepoId, candidate: &Candidate) -> Result<Connected, NetError> {
@@ -276,30 +336,47 @@ pub async fn sync_repo(
         })
         .collect();
     mapped.extend(cached_candidates(net, repo));
+    let lan = net.lan();
+    if let Some(lan) = &lan {
+        lan.query(repo);
+        mapped.extend(lan_candidates(lan, repo));
+    }
     let candidates = dedupe(mapped, net.node_id);
 
     let mut connected: Vec<Connected> = Vec::new();
-    let mut last_auth = false;
-    let mut last_no_shared = false;
-    for candidate in candidates {
-        if connected.len() >= MAX_SESSIONS {
-            break;
-        }
-        match dial(net, repo, &candidate).await {
-            Ok(peer) => connected.push(peer),
-            Err(err) => {
-                net.peer_fail(repo, &candidate.addr);
-                last_auth |= matches!(err, NetError::AuthFailed(_));
-                last_no_shared |= matches!(err, NetError::NoSharedRepo);
-                tracing::debug!(
-                    peer = %candidate.addr,
-                    code = err.code(),
-                    error = %err,
-                    "sync peer failed"
-                );
+    let mut failures = Failures::default();
+    let mut tried: Vec<PeerAddr> = Vec::new();
+    dial_all(
+        net,
+        repo,
+        candidates,
+        &mut connected,
+        &mut tried,
+        &mut failures,
+    )
+    .await;
+
+    // Route B answers within the query burst (0 s, 1 s, 3 s). Wait for it only
+    // when nothing else connected: up to find_timeout for a first clone
+    // (SYNC-6), and just past the burst when we already have state.
+    if let (true, Some(lan)) = (connected.is_empty(), &lan) {
+        let has_state = store.exists() || !net_state.signers.is_empty();
+        let deadline = tokio::time::Instant::now() + lan_wait(has_state);
+        while connected.is_empty() {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
             }
+            lan.wait_for_candidates(deadline - now).await;
+            let fresh: Vec<Candidate> = dedupe(lan_candidates(lan, repo), net.node_id)
+                .into_iter()
+                .filter(|candidate| !tried.contains(&candidate.addr))
+                .collect();
+            dial_all(net, repo, fresh, &mut connected, &mut tried, &mut failures).await;
         }
     }
+    let last_auth = failures.auth;
+    let last_no_shared = failures.no_shared;
 
     if connected.is_empty() {
         let resolved = store.resolve(&net_state);

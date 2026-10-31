@@ -301,3 +301,66 @@ The development image runs as uid 1000, so `cap_add` alone does not give
 `tcpdump` an effective `CAP_NET_RAW`. `Dockerfile.dev` installs
 `libcap2-bin` and sets file capabilities on `/usr/bin/tcpdump`, which keeps the
 test run unprivileged while still allowing the interest-token capture.
+
+## M3 (LAN discovery)
+
+### Own packets are matched by address and TCP port
+
+LAN-3 says to ignore packets from our own addresses. Taken literally, two
+daemons on one machine (two `SWARM_HOME`s, as the e2e tests and LAN-4's
+address reuse expect) could never find each other. A packet is dropped as our
+own only when its source IP is one of ours and its `tcp_port` is our listen
+port.
+
+### Unicast replies and SO_REUSEPORT
+
+With several daemons bound to the same LAN port on one host, the kernel
+delivers a unicast announce (LAN-2) to only one of them. Multicast still
+reaches all of them, so the other daemon learns of the seed from the next
+multicast announce. One daemon per host, the normal case, is unaffected.
+
+### Candidates live 300 s; queried repos match for 120 s
+
+The spec does not say how long a LAN candidate stays usable. Announces repeat
+every 60 s, so 300 s keeps a seed through four lost announces. A fresh clone
+has no database row yet, so the repo it queries is added to the LAN-1 "known"
+set for 120 s; otherwise the unicast reply would not match anything.
+
+### How long sync waits for LAN answers
+
+Sync waits for LAN only when no hint or cached peer connected. With no local
+state it waits up to `find_timeout`, 30 s (SYNC-6), then fails `no_peers`.
+With state it waits 3.5 s, just past the 3 s query, then returns stale.
+`SWARM_FIND_TIMEOUT` overrides the 30 s for tests.
+
+### One send per interface
+
+A socket bound to `0.0.0.0` sends multicast out of one interface only, and
+with no default route it may fail outright. The service sets
+`IP_MULTICAST_IF` (or the IPv6 interface index) for each joined interface and
+sends once per interface. Interfaces are re-read on every 60 s tick.
+
+### `lan.enabled` in config.toml is still deferred
+
+`config.toml` is not parsed yet. `SWARM_NO_LAN=1` is the switch, as it is for
+the other routes.
+
+### CI runs in Docker as root
+
+`lan.sh` needs network namespaces, which need root, and the host user has no
+passwordless sudo. `scripts/ci.sh` therefore runs inside the privileged dev
+container as root, with build output in `target/ci` (chowned back to the host
+user on exit), and treats an e2e SKIP as a failure.
+
+
+### The discovery manager is the candidate merge in `sync_repo`
+
+There is no separate manager type yet. `sync_repo` merges routes in a fixed
+order: link hints, then the cache route (`peers` table), then LAN.
+`dedupe` removes duplicate addresses, and a per-sync `tried` list yields each
+address once even when LAN answers arrive later (DM-1). The order keeps the
+M2 rule that an explicit hint wins. LAN plugs in as one more source, and with
+`SWARM_NO_LAN=1` the other routes behave exactly as in M2 (DM-5). Dials stay
+sequential, up to 4 sessions. Parallel dials (DM-3) and per-address backoff
+(DM-4) arrive with multi-peer fetch in M5, where a `find(repo)` stream type is
+worth having.

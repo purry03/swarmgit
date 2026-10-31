@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 swarm-core = { path = "../crates/swarm-core" }
+swarm-disc = { path = "../crates/swarm-disc" }
 
 [profile.release]
 debug = true
@@ -29,6 +30,12 @@ doc = false
 [[bin]]
 name = "refname_check"
 path = "fuzz_targets/refname_check.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "lan_packet"
+path = "fuzz_targets/lan_packet.rs"
 test = false
 doc = false
 

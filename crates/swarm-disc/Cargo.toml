@@ -1,6 +1,6 @@
 [package]
 name = "swarm-disc"
-description = "Swarmgit discovery routes. M2 provides link hints only."
+description = "Swarmgit discovery routes. Link hints and LAN multicast."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,10 +8,13 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+if-addrs = "0.15"
+socket2 = { version = "0.6", features = ["all"] }
 swarm-core = { path = "../swarm-core" }
 swarm-net = { path = "../swarm-net" }
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

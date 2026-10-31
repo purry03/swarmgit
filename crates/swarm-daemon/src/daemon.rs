@@ -221,6 +221,12 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
         tokio::spawn(async move { net::serve::serve(net, tcp_listener, shutdown).await });
     }
 
+    if lan_disabled() {
+        tracing::info!("lan discovery disabled by SWARM_NO_LAN");
+    } else {
+        start_lan(&net).await;
+    }
+
     let socket = home.socket_path();
     if socket.exists() {
         let _ = fs::remove_file(&socket);
@@ -270,4 +276,30 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
     let _ = fs::remove_file(home.daemon_json_path());
     tracing::info!("daemon stopped");
     Ok(())
+}
+
+fn lan_disabled() -> bool {
+    std::env::var("SWARM_NO_LAN").is_ok_and(|value| value == "1")
+}
+
+/// Start route B (6.3). A bind failure leaves the other routes working.
+async fn start_lan(net: &Arc<NetState>) {
+    let weak = Arc::downgrade(net);
+    let repos: swarm_disc::lan::RepoSource = Arc::new(move || {
+        let Some(net) = weak.upgrade() else {
+            return swarm_disc::lan::LanRepos::default();
+        };
+        swarm_disc::lan::LanRepos {
+            known: net.known_repos(),
+            seeded: net.serving_repos(),
+        }
+    });
+    let config = swarm_disc::lan::LanConfig::from_env(net.listen.port());
+    match swarm_disc::lan::LanService::start(config, repos).await {
+        Ok(lan) => {
+            tracing::info!(port = lan.port(), "lan discovery started");
+            net.set_lan(lan);
+        }
+        Err(err) => tracing::warn!(error = %err, "lan discovery unavailable"),
+    }
 }
