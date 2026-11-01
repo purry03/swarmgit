@@ -29,6 +29,7 @@ export GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-swarm@example.invalid}
 # M1 has no network transport; keep future discovery code out of the way.
 export SWARM_NO_DHT=1
 export SWARM_NO_LAN=1
+export SWARM_NO_UPNP=1
 
 swarm_fail() {
     echo "FAIL: $*" >&2

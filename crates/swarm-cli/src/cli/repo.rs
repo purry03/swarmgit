@@ -6,7 +6,8 @@ use swarm_daemon::Client;
 use swarm_store::git::Git;
 use swarm_store::Home;
 
-use super::{client_code, parse_repo};
+use super::{client_code, parse_link, parse_repo, with_client};
+use swarm_daemon::client::ClientError;
 
 async fn current_repo() -> Option<RepoId> {
     let cwd = std::env::current_dir().ok()?;
@@ -48,4 +49,52 @@ pub(super) async fn resolve_repo(value: Option<String>) -> Result<RepoId, i32> {
     }
     eprintln!("swarm: specify a repo");
     Err(2)
+}
+
+pub(super) async fn unseed(link: &str, json_output: bool) -> i32 {
+    let (repo, _) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call("unseed", json!({ "repo": repo.to_base32() }))
+            .await?;
+        if json_output {
+            println!("{}", json!({ "repo": repo.to_base32(), "unseed": result }));
+        } else {
+            println!("swarm://{}", repo.to_base32());
+        }
+        Ok(0)
+    })
+    .await
+}
+
+pub(super) async fn gc(link: &str, json_output: bool) -> i32 {
+    let (repo, _) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call("gc", json!({ "repo": repo.to_base32() }))
+            .await?;
+        if json_output {
+            println!("{}", json!({ "repo": repo.to_base32(), "gc": result }));
+        } else {
+            println!("swarm://{}", repo.to_base32());
+        }
+        Ok(0)
+    })
+    .await
 }

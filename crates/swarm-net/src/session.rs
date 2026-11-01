@@ -1,12 +1,12 @@
 //! Session actor: request/response matching, unsolicited messages and packs.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::error::NetError;
 use crate::frame::MAX_MESSAGE_BYTES;
@@ -20,6 +20,63 @@ enum Pending {
 
 type PendingMap = Arc<Mutex<HashMap<u64, Pending>>>;
 
+/// Send `Ping` after this long without a frame from the peer (7.4).
+pub const IDLE_PING: Duration = Duration::from_secs(30);
+/// Close after this long without a frame from the peer (7.4).
+pub const IDLE_CLOSE: Duration = Duration::from_secs(90);
+/// Consecutive request timeouts that close the session (7.4).
+pub const MAX_TIMEOUTS: u32 = 2;
+
+/// Index of the writer in [`Liveness::tasks`].
+const WRITER_TASK: usize = 1;
+
+/// Liveness shared by the reader, the watchdog and every handle.
+struct Liveness {
+    start: Instant,
+    last_rx_ms: AtomicU64,
+    timeouts: AtomicU32,
+    tasks: Mutex<Vec<AbortHandle>>,
+}
+
+impl Liveness {
+    fn touch(&self) {
+        let elapsed = u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.last_rx_ms.store(elapsed, Ordering::SeqCst);
+    }
+
+    fn idle(&self) -> Duration {
+        let now = u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        Duration::from_millis(now.saturating_sub(self.last_rx_ms.load(Ordering::SeqCst)))
+    }
+
+    fn close(&self) {
+        if let Ok(tasks) = self.tasks.lock() {
+            for task in tasks.iter() {
+                task.abort();
+            }
+        }
+    }
+
+    /// Stop reading and pinging but let the writer flush what is queued;
+    /// it ends once every handle is gone.
+    fn stop_reading(&self) {
+        if let Ok(tasks) = self.tasks.lock() {
+            for (ix, task) in tasks.iter().enumerate() {
+                if ix != WRITER_TASK {
+                    task.abort();
+                }
+            }
+        }
+    }
+
+    fn closed(&self) -> bool {
+        self.tasks
+            .lock()
+            .map(|tasks| tasks.iter().any(AbortHandle::is_finished))
+            .unwrap_or(true)
+    }
+}
+
 /// A cloneable handle used to send requests and replies.
 #[derive(Clone)]
 pub struct SessionHandle {
@@ -27,9 +84,21 @@ pub struct SessionHandle {
     pending: PendingMap,
     next_rid: Arc<AtomicU64>,
     info: Arc<PeerInfo>,
+    live: Arc<Liveness>,
 }
 
 impl SessionHandle {
+    /// True once the connection is gone (peer closed, idle, or timeouts).
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.live.closed()
+    }
+
+    /// Close the connection.
+    pub fn close(&self) {
+        self.live.close();
+    }
+
     /// Facts about the authenticated peer.
     #[must_use]
     pub fn info(&self) -> &PeerInfo {
@@ -78,9 +147,16 @@ impl SessionHandle {
             }
             return Err(err);
         }
-        let reply = tokio::time::timeout(timeout, rx)
-            .await
-            .map_err(|_| NetError::Timeout("request timed out".into()))?;
+        let Ok(reply) = tokio::time::timeout(timeout, rx).await else {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&rid);
+            }
+            if self.live.timeouts.fetch_add(1, Ordering::SeqCst) + 1 >= MAX_TIMEOUTS {
+                self.live.close();
+            }
+            return Err(NetError::Timeout("request timed out".into()));
+        };
+        self.live.timeouts.store(0, Ordering::SeqCst);
         let reply = reply.map_err(|_| NetError::Closed)?;
         if let Message::Error { code, msg, .. } = reply {
             return Err(NetError::Remote { code, msg });
@@ -155,8 +231,14 @@ impl Session {
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let next_rid = Arc::new(AtomicU64::new(1));
         let (in_tx, in_rx) = mpsc::channel::<Message>(64);
+        let live = Arc::new(Liveness {
+            start: Instant::now(),
+            last_rx_ms: AtomicU64::new(0),
+            timeouts: AtomicU32::new(0),
+            tasks: Mutex::new(Vec::new()),
+        });
 
-        tokio::spawn(async move {
+        let writer_task = tokio::spawn(async move {
             while let Some(bytes) = out_rx.recv().await {
                 if writer.write_message(&bytes).await.is_err() {
                     break;
@@ -166,12 +248,14 @@ impl Session {
 
         let reader_pending = Arc::clone(&pending);
         let reader_out = out_tx.clone();
+        let reader_live = Arc::clone(&live);
         let reader_task = tokio::spawn(async move {
             loop {
                 let bytes = match reader.read_message(MAX_MESSAGE_BYTES).await {
                     Ok(bytes) => bytes,
                     Err(_) => break,
                 };
+                reader_live.touch();
                 let message = match Message::decode(&bytes) {
                     Ok(message) => message,
                     Err(_) => break,
@@ -230,12 +314,43 @@ impl Session {
             }
         });
 
+        let watch_live = Arc::clone(&live);
+        let watch_out = out_tx.clone();
+        let watchdog = tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(5));
+            let mut nonce: u64 = 0;
+            loop {
+                tick.tick().await;
+                if watch_live.closed() {
+                    watch_live.close();
+                    break;
+                }
+                let idle = watch_live.idle();
+                if idle >= IDLE_CLOSE {
+                    watch_live.close();
+                    break;
+                }
+                if idle >= IDLE_PING {
+                    nonce = nonce.wrapping_add(1);
+                    if let Ok(bytes) = (Message::Ping { nonce }).encode() {
+                        let _ = watch_out.try_send(bytes);
+                    }
+                }
+            }
+        });
+        if let Ok(mut tasks) = live.tasks.lock() {
+            tasks.push(reader_task.abort_handle());
+            tasks.push(writer_task.abort_handle());
+            tasks.push(watchdog.abort_handle());
+        }
+
         Self {
             handle: SessionHandle {
                 tx: out_tx,
                 pending,
                 next_rid,
                 info,
+                live,
             },
             incoming: in_rx,
             reader_task,
@@ -263,5 +378,6 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.reader_task.abort();
+        self.handle.live.stop_reading();
     }
 }

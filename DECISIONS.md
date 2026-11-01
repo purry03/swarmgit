@@ -364,3 +364,71 @@ M2 rule that an explicit hint wins. LAN plugs in as one more source, and with
 sequential, up to 4 sessions. Parallel dials (DM-3) and per-address backoff
 (DM-4) arrive with multi-peer fetch in M5, where a `find(repo)` stream type is
 worth having.
+
+## M4
+
+### The repo ID is a secret, so the head salt is hashed (spec DHT-5 amended)
+
+Spec 6.4 used to set the BEP 44 salt to `SALT_HEAD || repo_id`. BEP 44 puts the
+salt in the clear in every `put` and `get`, so every DHT node that stores or
+routes the item would learn the repo ID. Knowing the ID is enough to look the
+repo up and clone it, and the rest of the design keeps it hidden: topics are
+`derive_key(CTX_TOPIC, …)`, and handshakes carry only interest tokens.
+The maintainer confirmed the ID must stay secret. The salt is therefore
+`SALT_HEAD || derive_key("swarmgit/v1/head-salt", repo_id)`. It keeps the
+48-byte length and the prefix, and anyone who knows the repo ID can still
+compute it. The key stays the root's Ed25519 public key. It does not reveal
+the repo ID, which is a hash over the whole hybrid bundle. The value
+(`{m: manifest_id, s: seq}`) reveals no ID either. `head_salt` has a test
+that the raw ID never appears in the salt. The spec (4.2 and DHT-5) now says
+the same.
+
+### The head check is bounded
+
+DHT-5 says a reader keeps looking until it reaches the seq the head pointer
+names. A pointer can be ahead of every reachable peer (the publisher is
+offline), so the loop is bounded: up to 3 more DHT lookups and up to 4
+sessions beyond the usual 4. When that runs out the sync keeps the highest
+seq it found; it never accepts a lower one (SYNC-3).
+
+### The DHT testnet is a separate process
+
+Spec 11.5 asks for at least 10 in-process nodes. The unit tests in
+`swarm-disc` use `mainline::Testnet` in process. The e2e scripts need the
+real daemons to share a testnet, so `swarm-dht-testnet` runs the same
+helper on 127.0.0.1 in its own process and prints the bootstrap list, which
+the daemons get through `SWARM_DHT_BOOTSTRAP`.
+
+## M5
+
+### Manifests are stored after their objects (spec 7.4 amended)
+
+7.4 said to run `accept` on an `Announce` and forward it when that succeeds.
+Storing the manifest at that point lets the node advertise heads before it
+has the objects: a client that dials it in between gets `bad object` from
+`Want`. The relay test hit exactly that. Now an `Announce` is only checked
+for freshness; the sync that follows fetches the objects and stores the
+manifest after them, and the envelope is forwarded only after that sync
+succeeds. The same order applies to every sync. A repeated announce is no
+longer fresh, so forwarding still happens once.
+
+### Syncs reuse open sessions
+
+A sync starts from the sessions already open for the repo, inbound or
+outbound, before dialing anything. An `Announce`-driven sync therefore costs
+no new handshakes, and the session limit (DM-3) counts them.
+
+### Request splitting and resume
+
+Wants are split round robin over the sessions that advertised each tip,
+falling back to any live session. Each session gets one `Want` at a time,
+in parallel. A failed or short pack marks the session failed and the next
+round reassigns what is still missing; indexed packs stay, which is the
+resume. There is no byte-range resume inside one pack.
+
+### UPnP is best effort and off in tests
+
+The listen port is mapped once at start and renewed every 30 minutes. With
+no gateway the loop stops instead of searching again. `SWARM_NO_UPNP=1`
+turns it off, and the tests and CI set it so no test touches a real
+gateway.

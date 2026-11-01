@@ -456,7 +456,7 @@ impl LanService {
                 }
                 list.push((candidate, now));
                 fresh = true;
-                tracing::debug!(repo = %repo.to_base32(), peer = %candidate, "lan candidate");
+                tracing::debug!(peer = %candidate, "lan candidate");
             }
         }
         if fresh {

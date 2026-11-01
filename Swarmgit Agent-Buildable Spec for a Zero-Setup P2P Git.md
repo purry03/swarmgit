@@ -253,6 +253,7 @@ These are constants in `swarm-core::consts`. Never build them dynamically.
 | CTX\_KEYID | swarmgit/v1/keyid |
 | CTX\_SESSION | swarmgit/v1/session |
 | CTX\_NODEAUTH | swarmgit/v1/nodeauth |
+| `CTX_HEAD_SALT` | `swarmgit/v1/head-salt` |
 
 ### 4.3 Derived values
 
@@ -578,12 +579,14 @@ This route uses the public BitTorrent DHT as a peer rendezvous. The project runs
 | Field | Value |
 | --- | --- |
 | Item key | the Ed25519 public key inside the signer's key bundle (the root bundle for the root signer) |
-| Salt | `SALT_HEAD` followed by the 32-byte repo ID (48 bytes, under the 64-byte limit) |
+| Salt | `SALT_HEAD` followed by `derive_key(CTX_HEAD_SALT, repo_id)` (48 bytes, under the 64-byte limit). Never the raw repo ID: BEP 44 sends the salt in the clear to every storing node, and the repo ID is secret |
 | BEP 44 `seq` | the manifest `seq` |
 | Value | bencoded dictionary with `m` = `manifest_id` (32 bytes) and `s` = manifest `seq` |
 | Refresh | every hour, because items expire after about two hours |
 
-A reader that sees a DHT head with a higher `seq` than any manifest a peer has served treats that peer as stale, keeps looking for a fresher one, and never accepts the head alone as proof. The pointer holds no data and no refs.
+A reader that sees a DHT head with a higher `seq` than any manifest a peer has served treats that peer as stale, keeps looking for a fresher one (bounded: up to 3 more DHT lookups and 4 sessions beyond the DM-3 limit, after which it keeps the highest `seq` it found), and never accepts the head alone as proof. The pointer holds no data and no refs.
+
+The repo ID is a secret: knowing it is enough to find and clone the repo, so it never goes onto the DHT. Topics and the head salt are BLAKE3 derivations of it, and the item key is the root's Ed25519 key, which does not reveal the ID.
 
 A link holds only a key ID, so a first-time reader cannot compute the item key. Heads are used from the second sync on, after a manifest has revealed the bundle. BEP 44 requires an Ed25519 signature, so this item is classical only. That is acceptable because it is a hint and never proof (4.8).
 
@@ -693,7 +696,7 @@ An address in `Peers` is a byte string: one kind byte, then the address bytes, t
 - A request with no answer within the request timeout (Defaults) fails the request. Two timeouts in a row close the session.
 - Accept at most 64 inbound connections and 4 per source IP. After 3 protocol violations from one address, ignore it for 10 minutes.
 - Any peer may be both requester and server on one connection. Handle requests concurrently, except `Want`, which is serialized by WANT-4.
-- On `Announce`, run `accept` (5.4). When it succeeds, forward the envelope once to the other healthy sessions that share the repo. Do not forward duplicates.
+- On `Announce`, check the envelope with `accept` (5.4) against the stored state without storing it. When it is newer, sync the repo: fetch its objects, then store the manifest (a node never advertises heads it cannot serve). When that sync succeeds, forward the envelope once to the other healthy sessions that share the repo. Do not forward duplicates.
 
 ### 7.5 Reachability
 
@@ -1091,7 +1094,7 @@ Acceptance:
 
 Acceptance:
 
-- A local DHT of at least 10 in-process nodes, started with the library's test network helper or hand-rolled with nodes bootstrapped to each other. A announces, B finds A without hints and clones.
+- A local DHT of at least 10 nodes, started with the library's test network helper or hand-rolled with nodes bootstrapped to each other. Unit tests run it in process; the e2e test runs it in its own process (`swarm-dht-testnet`) so that real daemons share it. A announces, B finds A without hints and clones.
 - The head pointer test: A publishes `seq` 3, a fake stale peer serves `seq` 2, B notices the pointer is newer and keeps looking until it gets `seq` 3.
 - A live smoke test against the real DHT, `SWARM_LIVE_DHT=1 cargo test live_dht -- --ignored`: announce a random repo, find it from a second process within 60 seconds. It is not part of CI because some networks block it.
 - With the DHT route disabled, every earlier test still passes (INV-5).

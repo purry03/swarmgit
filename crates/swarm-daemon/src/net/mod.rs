@@ -1,8 +1,11 @@
-//! Daemon network state: listener address, node key, peer sessions (M2).
+//! Daemon network state: listener address, node key, peer sessions (M2),
+//! and the DHT route, observed addresses and port mapping (M4, M5).
 
+pub mod dht;
 pub mod serve;
+pub mod upnp;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -13,6 +16,9 @@ use swarm_core::keyfile::NodeKey;
 use swarm_net::{PeerAddr, SessionHandle};
 use swarm_store::{Db, Home, RepoStore};
 use tokio::net::TcpListener;
+
+/// Concurrent uploads (WANT-5).
+pub const UPLOAD_SLOTS: u32 = 4;
 
 /// A connected peer that can receive `Announce`.
 pub struct Registered {
@@ -44,6 +50,9 @@ pub struct NetState {
     next_session: AtomicU64,
     sync_locks: Mutex<HashMap<[u8; 32], Arc<tokio::sync::Mutex<()>>>>,
     lan: OnceLock<Arc<swarm_disc::lan::LanService>>,
+    dht: OnceLock<swarm_disc::dht::MainlineDht>,
+    observed: Mutex<HashMap<IpAddr, HashSet<[u8; 32]>>>,
+    external: Mutex<Option<IpAddr>>,
 }
 
 impl NetState {
@@ -63,12 +72,98 @@ impl NetState {
             node_id,
             listen,
             max_pack_bytes,
-            uploads: Arc::new(tokio::sync::Semaphore::new(4)),
+            uploads: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS as usize)),
             sessions: Mutex::new(Vec::new()),
             next_session: AtomicU64::new(1),
             sync_locks: Mutex::new(HashMap::new()),
             lan: OnceLock::new(),
+            dht: OnceLock::new(),
+            observed: Mutex::new(HashMap::new()),
+            external: Mutex::new(None),
         }))
+    }
+
+    /// Attach the running DHT route. Later calls are ignored.
+    pub fn set_dht(&self, dht: swarm_disc::dht::MainlineDht) {
+        let _ = self.dht.set(dht);
+    }
+
+    /// The DHT route, unless `SWARM_NO_DHT=1` or it failed to start.
+    pub fn dht(&self) -> Option<swarm_disc::dht::MainlineDht> {
+        self.dht.get().cloned()
+    }
+
+    /// Count the address a peer says it sees for us (6.5). Two different
+    /// peers reporting the same IP make it our external address.
+    fn observe(&self, info: &swarm_net::PeerInfo) {
+        let Ok((addr, _)) = PeerAddr::decode(&info.observed) else {
+            return;
+        };
+        let ip = addr.socket().ip();
+        if ip.is_unspecified() {
+            return;
+        }
+        let reporters = {
+            let mut observed = self
+                .observed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if observed.len() >= 64 && !observed.contains_key(&ip) {
+                return;
+            }
+            let set = observed.entry(ip).or_default();
+            set.insert(*info.node_id.as_bytes());
+            set.len()
+        };
+        if reporters >= 2 {
+            let mut external = self
+                .external
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if *external != Some(ip) {
+                tracing::debug!(ip = %ip, "external address confirmed by two peers");
+                *external = Some(ip);
+            }
+        }
+    }
+
+    /// Our external IP, once two distinct peers agree on it.
+    pub fn external_ip(&self) -> Option<IpAddr> {
+        *self
+            .external
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The one-hint link this node advertises for `repo`.
+    pub fn link(&self, repo: RepoId) -> swarm_core::ids::Link {
+        let configured = std::env::var("SWARM_ADVERTISE")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let listen_ip = self.listen.ip();
+        let host = match (configured, self.external_ip()) {
+            (Some(host), _) => Some(host),
+            (None, Some(ip)) if listen_ip.is_unspecified() && !ip.is_loopback() => Some(match ip {
+                IpAddr::V4(ip) => ip.to_string(),
+                IpAddr::V6(ip) => format!("[{ip}]"),
+            }),
+            _ => None,
+        };
+        link_with_hint(repo, self.listen, self.node_id, host.as_deref())
+    }
+
+    /// Live sessions that carry `repo`, inbound or outbound.
+    pub fn sessions_for(&self, repo: RepoId) -> Vec<SessionHandle> {
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        sessions
+            .iter()
+            .filter(|session| !session.handle.is_closed())
+            .filter(|session| session.shared.iter().any(|(shared, _)| *shared == repo))
+            .map(|session| session.handle.clone())
+            .collect()
     }
 
     /// Attach the running LAN route. Later calls are ignored.
@@ -109,6 +204,7 @@ impl NetState {
     /// Register a session for `Announce` forwarding. Returns its ID.
     pub fn register(&self, handle: SessionHandle) -> u64 {
         let id = self.next_session.fetch_add(1, Ordering::SeqCst);
+        self.observe(handle.info());
         let shared = handle.info().shared.clone();
         let mut sessions = self
             .sessions
@@ -278,7 +374,7 @@ pub fn advertise_host(listen: SocketAddr) -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
-fn primary_ipv4() -> Option<Ipv4Addr> {
+pub(crate) fn primary_ipv4() -> Option<Ipv4Addr> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("1.1.1.1:80").ok()?;
     match socket.local_addr().ok()?.ip() {

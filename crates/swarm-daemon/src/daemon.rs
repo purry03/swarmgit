@@ -168,7 +168,7 @@ async fn seeded_sync_loop(state: Arc<DaemonState>) {
         };
         for row in repos.into_iter().filter(|row| row.seeding) {
             if let Err(err) = crate::sync::sync_repo(&net, row.id, Vec::new()).await {
-                tracing::debug!(repo = %row.id.to_base32(), code = err.code(), error = %err, "seeded sync failed");
+                tracing::debug!(code = err.code(), error = %err, "seeded sync failed");
             }
         }
     }
@@ -226,6 +226,8 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
     } else {
         start_lan(&net).await;
     }
+    net::dht::start(&net).await;
+    net::upnp::start(&net);
 
     let socket = home.socket_path();
     if socket.exists() {
@@ -270,6 +272,7 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
     }
 
     peer_shutdown.notify_waiters();
+    net.persist_dht_nodes().await;
     wait_for_clients(&state, Duration::from_secs(5)).await;
     drop(listener);
     let _ = fs::remove_file(&socket);

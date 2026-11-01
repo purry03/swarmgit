@@ -1,4 +1,9 @@
-//! Repo operations behind the IPC commands: init, sync, publish and status.
+//! Repo operations behind the IPC commands: init, sync and publish.
+
+mod admin;
+
+use admin::announce_routes;
+pub use admin::{fork, gc, list_repos, repo_info, set_seeding, status};
 
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +22,7 @@ use swarm_store::RepoStore;
 use crate::protocol::IpcError;
 use crate::state::DaemonState;
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
@@ -38,13 +43,13 @@ pub fn parse_repo(value: &str) -> Result<RepoId, IpcError> {
     RepoId::from_hex(value).map_err(|err| IpcError::new("malformed", err.to_string()))
 }
 
-fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, IpcError> {
+pub(crate) fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, IpcError> {
     args.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| IpcError::new("malformed", format!("missing argument {key}")))
 }
 
-fn arg_hints(args: &Value) -> Vec<String> {
+pub(crate) fn arg_hints(args: &Value) -> Vec<String> {
     args.get("hints")
         .and_then(Value::as_array)
         .map(|items| {
@@ -57,7 +62,7 @@ fn arg_hints(args: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn db_repo(state: &DaemonState, repo: RepoId) -> Result<swarm_store::RepoRow, IpcError> {
+pub(crate) fn db_repo(state: &DaemonState, repo: RepoId) -> Result<swarm_store::RepoRow, IpcError> {
     let db = state
         .db
         .lock()
@@ -66,7 +71,7 @@ fn db_repo(state: &DaemonState, repo: RepoId) -> Result<swarm_store::RepoRow, Ip
         .ok_or_else(|| IpcError::new("unknown_repo", "unknown repo"))
 }
 
-fn root_seq(state: &AcceptState, repo: RepoId) -> u64 {
+pub(crate) fn root_seq(state: &AcceptState, repo: RepoId) -> u64 {
     state
         .signers
         .get(&KeyId::from_bytes(*repo.as_bytes()))
@@ -168,10 +173,13 @@ pub async fn init_repo(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
     let resolved = store.resolve(&accepted);
     store.apply_canonical(&resolved.canonical).await?;
 
-    announce_lan(state);
+    announce_routes(state, repo);
+    if let (Some(net), Some(seed)) = (state.net(), key.ed_seed()) {
+        net.put_head(repo, seed, stored.manifest_id, 1);
+    }
     let base32 = repo.to_base32();
     let link = match state.net() {
-        Some(net) => crate::net::link_with_hint(repo, net.listen, net.node_id, None).to_string(),
+        Some(net) => net.link(repo).to_string(),
         None => format!("swarm://{base32}"),
     };
     Ok(json!({
@@ -211,7 +219,7 @@ pub async fn sync(state: &DaemonState, args: &Value) -> Result<Value, IpcError> 
     }))
 }
 
-fn net_error(err: swarm_net::NetError) -> IpcError {
+pub(crate) fn net_error(err: swarm_net::NetError) -> IpcError {
     IpcError::new(err.code(), err.to_string())
 }
 
@@ -389,222 +397,15 @@ pub async fn publish(state: &DaemonState, args: &Value) -> Result<Value, IpcErro
     store.apply_canonical(&resolved.canonical).await?;
     if let Some(net) = state.net() {
         net.announce(repo, stored.envelope.clone()).await;
+        if let Some(seed) = key.ed_seed() {
+            net.put_head(repo, seed, stored.manifest_id, seq);
+        }
+        net.announce_dht(repo);
     }
 
     Ok(json!({
         "seq": seq,
         "manifest_id": hex::encode(stored.manifest_id),
         "noop": false,
-    }))
-}
-
-/// `repo_info`: what the remote helper needs to know.
-pub async fn repo_info(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
-    let repo = parse_repo(arg_str(args, "repo")?)?;
-    let row = db_repo(state, repo)?;
-    let store = RepoStore::new(state.home.clone(), repo);
-    let accepted = store.load_state()?;
-    let resolved = store.resolve(&accepted);
-    Ok(json!({
-        "repo": repo.to_base32(),
-        "store_path": store.store_path().to_string_lossy(),
-        "seq": root_seq(&accepted, repo),
-        "has_key": store.has_key(),
-        "seeding": row.seeding,
-        "conflicts": resolved.conflicts.keys().cloned().collect::<Vec<_>>(),
-        "object_format": row.object_format,
-    }))
-}
-
-fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, IpcError> {
-    let store = RepoStore::new(state.home.clone(), row.id);
-    let accepted = store.load_state()?;
-    let resolved = store.resolve(&accepted);
-    let equivocations = {
-        let db = state
-            .db
-            .lock()
-            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-        let list = db.equivocations(row.id)?;
-        let peers = db.peer_count(row.id)?;
-        (list, peers)
-    };
-    let (equivocations, peers) = equivocations;
-    let equivocations: Vec<Value> = equivocations
-        .into_iter()
-        .map(|item| {
-            json!({
-                "signer": item.signer.to_hex(),
-                "seq": item.seq,
-                "id_a": hex::encode(item.id_a),
-                "id_b": hex::encode(item.id_b),
-                "seen": item.seen,
-            })
-        })
-        .collect();
-    Ok(json!({
-        "repo": row.id.to_base32(),
-        "link": format!("swarm://{}", row.id.to_base32()),
-        "seq": root_seq(&accepted, row.id),
-        "refs": resolved.canonical.len(),
-        "peers": peers,
-        "seeding": row.seeding,
-        "object_format": row.object_format,
-        "conflicts": resolved.conflicts.keys().cloned().collect::<Vec<_>>(),
-        "equivocations": equivocations,
-    }))
-}
-
-fn repo_rows(state: &DaemonState) -> Result<Vec<swarm_store::RepoRow>, IpcError> {
-    let db = state
-        .db
-        .lock()
-        .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-    Ok(db.repos()?)
-}
-
-/// `status`: summaries for one or all repos.
-pub async fn status(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
-    let rows = match args.get("repo").and_then(Value::as_str) {
-        Some(value) => vec![db_repo(state, parse_repo(value)?)?],
-        None => repo_rows(state)?,
-    };
-    let mut repos = Vec::with_capacity(rows.len());
-    for row in &rows {
-        repos.push(summary(state, row)?);
-    }
-    let lan = match state.net().map(|net| net.lan()) {
-        Some(Some(lan)) => json!({ "enabled": true, "port": lan.port() }),
-        _ => json!({ "enabled": false }),
-    };
-    Ok(json!({ "repos": repos, "lan": lan }))
-}
-
-/// Multicast a LAN announce now, so a new seed is found without waiting for
-/// the 60 s timer (6.3).
-fn announce_lan(state: &DaemonState) {
-    if let Some(lan) = state.net().and_then(|net| net.lan()) {
-        tokio::spawn(async move { lan.announce_now().await });
-    }
-}
-
-/// `list_repos`: the array form used by some clients.
-pub async fn list_repos(state: &DaemonState, _args: &Value) -> Result<Value, IpcError> {
-    let rows = repo_rows(state)?;
-    let mut repos = Vec::with_capacity(rows.len());
-    for row in &rows {
-        repos.push(summary(state, row)?);
-    }
-    Ok(Value::Array(repos))
-}
-
-/// `seed` and `unseed` share this implementation.
-pub async fn set_seeding(
-    state: &DaemonState,
-    args: &Value,
-    seeding: bool,
-) -> Result<Value, IpcError> {
-    let repo = parse_repo(arg_str(args, "repo")?)?;
-    let _ = db_repo(state, repo)?;
-    {
-        let db = state
-            .db
-            .lock()
-            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-        db.set_seeding(repo, seeding)?;
-    }
-    if seeding {
-        announce_lan(state);
-    }
-    Ok(json!({ "seeding": seeding }))
-}
-
-/// `fork`: create an independent repo from another one (section 8.4).
-pub async fn fork(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
-    let raw = arg_str(args, "repo")?;
-    let hints = arg_hints(args);
-    let source = parse_repo(raw)?;
-    let net = state
-        .net()
-        .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
-    let outcome = crate::sync::sync_repo(net, source, hints)
-        .await
-        .map_err(net_error)?;
-    let source_store = RepoStore::new(state.home.clone(), source);
-    if !source_store.exists() {
-        return Err(IpcError::new("unknown_repo", "source store does not exist"));
-    }
-
-    let key = RepoKey::generate(SUITE_HYBRID)
-        .map_err(|err| IpcError::new("bad_keys", err.to_string()))?;
-    let signer = key
-        .signer()
-        .map_err(|err| IpcError::new("bad_keys", err.to_string()))?;
-    let bundle = signer.bundle();
-    let repo = repo_id(&bundle);
-    let signer_id = key_id(&bundle);
-    let store = RepoStore::new(state.home.clone(), repo);
-    if store.exists() {
-        return Err(IpcError::new(
-            "malformed",
-            "the derived fork store already exists",
-        ));
-    }
-    git::clone_bare(&source_store.store_path(), &store.store_path())
-        .await
-        .map_err(|err| IpcError::new("malformed", err.to_string()))?;
-    store
-        .configure()
-        .await
-        .map_err(|err| IpcError::new("malformed", err.to_string()))?;
-    store.write_key(&key)?;
-
-    let manifest = Manifest {
-        version: 1,
-        repo_id: *repo.as_bytes(),
-        signer: *signer_id.as_bytes(),
-        seq: 1,
-        prev: [0u8; 32],
-        ts: now() as u64,
-        refs: outcome.ref_list.clone(),
-        head: outcome.head.clone(),
-        maintainers: None,
-        object_format: Some(outcome.object_format.clone()),
-        tombstones: None,
-        forked_from: Some(*source.as_bytes()),
-        recovery: None,
-        new_root: None,
-        signer_keys: bundle,
-        suite: u64::from(SUITE_HYBRID),
-    };
-    let envelope = manifest
-        .sign(&*signer)
-        .map_err(|err| IpcError::new(err.to_string(), err.to_string()))?;
-    let mut accepted = AcceptState::new(repo);
-    accepted
-        .accept(envelope.clone())
-        .map_err(|err| IpcError::new(err.to_string(), err.to_string()))?;
-    let stored = StoredManifest::from(envelope);
-    store.persist_state(&accepted)?;
-    {
-        let db = state
-            .db
-            .lock()
-            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-        db.insert_repo(repo, &outcome.object_format, now())?;
-        db.upsert_signer(repo, signer_id, 1, &stored.manifest_id)?;
-        db.set_seeding(repo, true)?;
-        db.set_last_sync(repo, now())?;
-    }
-    let resolved = store.resolve(&accepted);
-    store.apply_canonical(&resolved.canonical).await?;
-    announce_lan(state);
-    let link = crate::net::link_with_hint(repo, net.listen, net.node_id, None).to_string();
-    Ok(json!({
-        "repo_id": repo.to_base32(),
-        "link": link,
-        "forked_from": source.to_base32(),
-        "object_format": outcome.object_format,
-        "seq": 1,
     }))
 }

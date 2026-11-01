@@ -101,6 +101,16 @@ impl RepoKey {
         })
     }
 
+    /// The Ed25519 seed of a hybrid key, used to sign the DHT head pointer
+    /// (DHT-5). `None` for other suites.
+    #[must_use]
+    pub fn ed_seed(&self) -> Option<[u8; 32]> {
+        if self.suite != SUITE_HYBRID {
+            return None;
+        }
+        self.secret.get(..32)?.try_into().ok()
+    }
+
     /// Build a signer for this key.
     pub fn signer(&self) -> Result<Box<dyn Signer>, CryptoError> {
         match self.suite {

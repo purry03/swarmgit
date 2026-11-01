@@ -210,7 +210,11 @@ the current state of an existing one. Its first manifest records
 | `SWARM_NO_LAN` | `1` turns off LAN multicast discovery (UDP 42099, groups `239.255.42.99` and `ff02::4242`). Other routes keep working. |
 | `SWARM_LAN_PORT` | LAN discovery UDP port, default `42099`. |
 | `SWARM_FIND_TIMEOUT` | Seconds a first clone waits for LAN answers, default `30`. |
-| `SWARM_NO_DHT` | Disables the DHT route, which does not exist yet. |
+| `SWARM_NO_DHT` | `1` turns off the Mainline DHT route (announce, peer lookup and the head pointer). Other routes keep working. |
+| `SWARM_DHT_BOOTSTRAP` | Comma-separated `host:port` list that replaces the built-in DHT bootstrap nodes (tests point it at a local testnet). |
+| `SWARM_DHT_BIND` | IP the DHT UDP socket binds to. |
+| `SWARM_DHT_PORT` | DHT UDP port; ephemeral by default. Known DHT nodes are kept in `swarm.db` and reused on the next start. |
+| `SWARM_NO_UPNP` | `1` skips the best-effort UPnP IGD port mapping of the listen port. |
 | `SWARM_MAX_PACK_BYTES` | Largest served or accepted pack, default 2 GiB. |
 | `SWARM_LOG` | Tracing filter for the daemon, default `info`. |
 | `SWARM_IDLE_EXIT_MINUTES` | Idle shutdown for an unseeded daemon, default 30. |
@@ -228,8 +232,12 @@ swarm seed <link> [--json]
 swarm unseed <link> [--json]
 swarm fork <link> [--json]
 swarm key backup <repo> -o FILE
+swarm gc [--json] <repo>
 swarm daemon [--foreground] | daemon stop
 ```
+
+`swarm gc` repacks a repo's object store when no sync or upload is running; it
+keeps every object reachable from a stored manifest.
 
 `repo` accepts a base32 repo ID, hex, or a full `swarm://` link. When omitted,
 `swarm` uses the `swarm` remote of the current git repository, or the only
@@ -249,7 +257,10 @@ worktree with that repo.
 `docker compose -f compose.peers.yaml exec peer-a ss -tlnp | grep 42424`.
 Inside the compose network use `a`/`b`, not `127.0.0.1`.
 
-**A hintless `swarm://<repo>` link finds nothing** — LAN discovery only reaches
+**A hintless `swarm://<repo>` link finds nothing** — off the local network the
+link relies on the Mainline DHT, which needs outbound UDP and a seeder that has
+announced in the last 15 minutes; check `SWARM_NO_DHT` is not set on either
+side. LAN discovery only reaches
 the same network segment (TTL 1) and needs UDP 42099 open on both peers. Check
 `swarm status --json` shows `"lan": {"enabled": true}`, that `SWARM_NO_LAN` is
 not set, and that the seeder has run `swarm seed` or pushed the repo. Wi-Fi with
@@ -291,6 +302,18 @@ docker compose run --rm dev bash -c 'cargo fmt --all -- --check'
 # End-to-end: M1 local flow, then M2 clone and hostile-peer paths.
 docker compose run --rm dev bash -c 'tests/e2e/m1.sh'
 docker compose run --rm dev bash -c 'tests/e2e/m2.sh'
+
+# M4: hintless clone and head pointer on a local 10-node DHT testnet.
+docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/dht.sh'
+# M5: relay over the DHT, peer exchange, Announce, two seeders and gc.
+docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m5.sh'
+
+# Against the public Mainline DHT (needs internet access).
+docker compose run --rm -e SWARM_LIVE_DHT=1 dev bash -c \
+    'cargo test -p swarm-disc live_dht -- --ignored'
+
+# Everything, as the milestone gate runs it.
+scripts/ci.sh
 ```
 
 The M2 script needs `tcpdump`, `ss`, `sqlite3` and `timeout`; the development

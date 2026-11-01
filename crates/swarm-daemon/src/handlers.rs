@@ -39,6 +39,7 @@ async fn dispatch(state: &DaemonState, request: &Request) -> Result<Value, IpcEr
         "seed" => repo::set_seeding(state, args, true).await,
         "unseed" => repo::set_seeding(state, args, false).await,
         "fork" => repo::fork(state, args).await,
+        "gc" => repo::gc(state, args).await,
         "stop" => Ok(json!({ "stopped": true })),
         other => Err(IpcError::new(
             "malformed",

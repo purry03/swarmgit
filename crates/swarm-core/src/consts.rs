@@ -26,6 +26,11 @@ pub const CTX_NODEAUTH: &[u8] = b"swarmgit/v1/nodeauth";
 /// BEP 44 salt prefix for the DHT head pointer.
 pub const SALT_HEAD: &[u8] = b"swarmgit/v1/head";
 
+/// BLAKE3 derive-key context that hides the repo ID inside the head salt.
+/// The repo ID is secret (see DECISIONS.md), and BEP 44 salts travel in
+/// the clear to every DHT node that stores the item.
+pub const CTX_HEAD_SALT: &str = "swarmgit/v1/head-salt";
+
 /// Bundle file magic.
 pub const MAGIC_BUNDLE: &[u8] = b"SWGB1\n";
 

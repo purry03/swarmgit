@@ -15,7 +15,7 @@ use swarm_store::StoreError;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
-use super::{now, NetState};
+use super::NetState;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -120,7 +120,13 @@ async fn handle_connection(net: Arc<NetState>, stream: TcpStream, peer: SocketAd
     let node = transport.info.node_id;
     tracing::debug!(peer = %peer, node = %node.to_hex(), "inbound session ready");
 
-    let mut session = Session::start(transport);
+    run_session(net, Session::start(transport)).await;
+}
+
+/// Register a session and serve its incoming messages until it closes.
+/// Inbound and outbound sessions both run here, so a session dialed for a
+/// sync stays open for `Announce` and later syncs (7.4).
+pub async fn run_session(net: Arc<NetState>, mut session: Session) {
     let id = net.register(session.handle());
     let want_busy = Arc::new(AtomicBool::new(false));
     while let Some(message) = session.recv_incoming().await {
@@ -131,7 +137,15 @@ async fn handle_connection(net: Arc<NetState>, stream: TcpStream, peer: SocketAd
             serve_message(net, handle, message, busy).await;
         });
     }
+    session.handle().close();
     net.unregister(id);
+}
+
+/// Spawn [`run_session`] and return a handle for requests.
+pub fn spawn_session(net: &Arc<NetState>, session: Session) -> SessionHandle {
+    let handle = session.handle();
+    tokio::spawn(run_session(Arc::clone(net), session));
+    handle
 }
 
 fn repo_for(handle: &SessionHandle, repo_ix: u16) -> Option<RepoId> {
@@ -192,9 +206,18 @@ async fn serve_message(
         } => serve_want(&net, &handle, rid, repo_ix, wants, haves, busy).await,
         Message::Announce { repo_ix, envelope } => {
             if let Some(repo) = repo_for(&handle, repo_ix) {
-                match accept_announce(&net, repo, envelope.clone()).await {
+                match announce_is_fresh(&net, repo, &envelope) {
                     Ok(true) => {
-                        net.announce(repo, envelope).await;
+                        // Fetch the manifest and its objects over the open
+                        // sessions, then forward the announce once (7.4): a
+                        // repeat is no longer fresh, so it stops here. A
+                        // sync that fails forwards nothing we cannot serve.
+                        match crate::sync::sync_repo(&net, repo, Vec::new()).await {
+                            Ok(_) => net.announce(repo, envelope).await,
+                            Err(err) => {
+                                tracing::debug!(error = %err, "sync after announce failed");
+                            }
+                        }
                     }
                     Ok(false) => {}
                     Err(err) => {
@@ -394,36 +417,20 @@ fn serve_peers(net: &NetState, handle: &SessionHandle, rid: u64, repo_ix: u16) {
     reply(handle, Message::Peers { rid, addresses });
 }
 
-/// Accept an `Announce` through the same path as remote manifests.
-pub async fn accept_announce(
+/// Whether an `Announce` carries a manifest newer than the stored one.
+/// Nothing is stored here: the sync that follows fetches the objects first
+/// and stores the manifest after them.
+pub fn announce_is_fresh(
     net: &NetState,
     repo: RepoId,
-    envelope: Vec<u8>,
+    envelope: &[u8],
 ) -> Result<bool, StoreError> {
-    let verified = verify_envelope(&envelope).map_err(StoreError::Core)?;
-    let store = net.store(repo);
-    let mut state = store.load_state()?;
-    let fresh = matches!(
+    let verified = verify_envelope(envelope).map_err(StoreError::Core)?;
+    let mut state = net.store(repo).load_state()?;
+    Ok(matches!(
         state.accept(verified)?,
         swarm_core::accept::AcceptOutcome::Accepted { .. }
-    );
-    if !fresh {
-        return Ok(false);
-    }
-    store.persist_state(&state)?;
-    {
-        let db = net
-            .db
-            .lock()
-            .map_err(|_| StoreError::Message("database lock poisoned".into()))?;
-        for (signer, stored) in &state.signers {
-            db.upsert_signer(repo, *signer, stored.manifest.seq, &stored.manifest_id)?;
-        }
-        db.set_last_sync(repo, now())?;
-    }
-    let resolved = store.resolve(&state);
-    store.apply_canonical(&resolved.canonical).await?;
-    Ok(true)
+    ))
 }
 
 /// Convenience for tests: a request timeout constant.

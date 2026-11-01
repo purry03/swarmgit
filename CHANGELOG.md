@@ -2,6 +2,80 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## M5 - peer exchange, seeding, multi-peer fetch (2026-11-24)
+
+### Added
+
+- Peer exchange (6.5). Every sync sends `GetPeers` on each session and keeps
+  up to 32 addresses per reply in the `peers` table, pinned when the reply
+  carries a node ID. A node serves the healthy peers it knows for the repo.
+  The handshake's observed address is counted per reporting node, and an IP
+  is used as our own only after two distinct nodes report it.
+- `Announce` forwarding (7.4). A fresh manifest triggers a sync over the open
+  sessions; once its objects are stored, the envelope is forwarded once to
+  the other sessions that share the repo. A push now reaches seeders without
+  polling.
+- Seeding loop: seeded repos sync every 5 minutes, idle sessions are pinged
+  after 30 s and closed after 90 s.
+- Multi-peer fetch: up to 8 dials in flight and 4 sessions per repo (DM-2,
+  DM-3). Wants are split across the sessions that advertise them; a session
+  whose pack fails or comes back short is dropped and its wants move to the
+  others. Packs already indexed stay, so a later round resumes.
+- Best-effort UPnP IGD mapping of the listen port through `igd-next`, with a
+  one-hour lease renewed every 30 minutes. `SWARM_NO_UPNP=1` turns it off.
+- `swarm gc [--json] <repo>` repacks a store when no sync or upload is
+  running (ST-7) and keeps every object reachable from a stored manifest.
+
+### Changed
+
+- A sync stores manifests only after their objects are in the store, so a
+  node never advertises heads it cannot serve.
+
+### Tests
+
+```sh
+scripts/ci.sh                               # everything below, in Docker
+docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m5.sh'
+                                            # relay, PEX, Announce, two seeders, gc
+```
+
+## M4 - Mainline DHT (2026-11-24)
+
+### Added
+
+- `swarm-disc::dht`: the `Dht` trait over `mainline` 8. `announce_repo`
+  announces the topics for yesterday, today and tomorrow (DHT-2), `find`
+  looks up today and yesterday (DHT-1), and `put_head`/`get_head` store and
+  read the BEP 44 head pointer (DHT-5). Every call has a timeout and failure
+  only logs at debug (DHT-4).
+- Nodes that answered are kept in the `dht_nodes` table (64 at most, saved
+  every 10 minutes and at shutdown) and given to the library at the next
+  start (DHT-3).
+- The daemon announces seeded repos every 15 minutes and refreshes the head
+  pointer after every publish and every hour. A sync starts a DHT lookup in
+  parallel with the other routes. When the head pointer is ahead of every
+  manifest the peers offer, it keeps looking on the DHT (up to 3 more
+  rounds and 4 more sessions) until it reaches that seq.
+- `swarm-dht-testnet [N]` starts an N-node local testnet (default 10) and
+  prints its bootstrap list, for the e2e scripts.
+- `SWARM_DHT_BOOTSTRAP`, `SWARM_DHT_BIND` and `SWARM_DHT_PORT`.
+  `SWARM_NO_DHT=1` turns the route off; the tests set it (INV-5).
+
+### Security
+
+- The head pointer salt is `SALT_HEAD || derive_key("swarmgit/v1/head-salt",
+  repo_id)`, so no DHT data carries the repo ID (spec 4.2 and DHT-5 amended).
+
+### Tests
+
+```sh
+SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --workspace   # INV-5 (Docker)
+docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/dht.sh'
+                                            # hintless clone, DHT-3, head pointer
+docker compose run --rm -e SWARM_LIVE_DHT=1 dev bash -c \
+    'cargo test -p swarm-disc live_dht -- --ignored'      # public DHT, not in CI
+```
+
 ## M3 - LAN discovery (2026-11-24)
 
 ### Added

@@ -395,6 +395,59 @@ impl Db {
         Ok(())
     }
 
+    /// Remember a PEX candidate without touching an existing row (6.5). A
+    /// node ID, when given, becomes the pin for a new address.
+    pub fn record_peer_hint(
+        &self,
+        repo: RepoId,
+        addr: &str,
+        node_id: Option<&[u8; 32]>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO peers(repo, addr, node_id, last_ok, fails)
+             VALUES(?1, ?2, ?3, NULL, 0)",
+            params![&repo.as_bytes()[..], addr, node_id.map(|id| id.to_vec())],
+        )?;
+        Ok(())
+    }
+
+    /// DHT nodes that answered before, newest first (DHT-3).
+    pub fn dht_nodes(&self, limit: usize) -> Result<Vec<String>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT addr FROM dht_nodes ORDER BY last_ok DESC LIMIT ?1")?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = statement.query_map(params![limit], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Replace the persisted DHT nodes, keeping at most `keep` of them.
+    pub fn save_dht_nodes(
+        &self,
+        nodes: &[String],
+        when: i64,
+        keep: usize,
+    ) -> Result<(), StoreError> {
+        for addr in nodes {
+            self.conn.execute(
+                "INSERT INTO dht_nodes(addr, last_ok) VALUES(?1, ?2)
+                 ON CONFLICT(addr) DO UPDATE SET last_ok = excluded.last_ok",
+                params![addr, when],
+            )?;
+        }
+        let keep = i64::try_from(keep).unwrap_or(i64::MAX);
+        self.conn.execute(
+            "DELETE FROM dht_nodes WHERE addr NOT IN
+               (SELECT addr FROM dht_nodes ORDER BY last_ok DESC LIMIT ?1)",
+            params![keep],
+        )?;
+        Ok(())
+    }
+
     /// Create a repo row when it does not exist yet.
     pub fn ensure_repo(
         &self,
@@ -430,6 +483,23 @@ mod tests {
         assert_eq!(db.signer_seq(repo, signer).unwrap(), Some(3));
         assert_eq!(db.equivocations(repo).unwrap().len(), 1);
         assert_eq!(db.repos().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn dht_nodes_and_hints() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("swarm.db")).unwrap();
+        db.save_dht_nodes(&["1.2.3.4:5".into(), "6.7.8.9:1".into()], 10, 1)
+            .unwrap();
+        assert_eq!(db.dht_nodes(10).unwrap().len(), 1);
+        db.save_dht_nodes(&["9.9.9.9:9".into()], 20, 8).unwrap();
+        assert_eq!(db.dht_nodes(10).unwrap()[0], "9.9.9.9:9");
+        let repo = RepoId::from_bytes([1u8; 32]);
+        db.record_peer_ok(repo, "a:1", &[3; 32], 5).unwrap();
+        db.record_peer_hint(repo, "a:1", Some(&[4; 32])).unwrap();
+        db.record_peer_hint(repo, "b:2", None).unwrap();
+        assert_eq!(db.peer_node(repo, "a:1").unwrap(), Some([3; 32]));
+        assert_eq!(db.peer_count(repo).unwrap(), 2);
     }
 
     #[test]

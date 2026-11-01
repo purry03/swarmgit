@@ -33,12 +33,15 @@ step "cargo clippy -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
 step "cargo test"
-cargo test --workspace -q
+# INV-5: every earlier test passes with the DHT off; the DHT unit tests run
+# their own local testnet regardless. No test maps ports on a real gateway.
+SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --workspace -q
 
 step "cargo build"
 cargo build --workspace -q
 
-for script in tests/e2e/m1.sh tests/e2e/m2.sh tests/e2e/lan.sh; do
+for script in tests/e2e/m1.sh tests/e2e/m2.sh tests/e2e/lan.sh \
+    tests/e2e/dht.sh tests/e2e/m5.sh; do
     step "$script"
     out=$(mktemp)
     bash "$script" 2>&1 | tee "$out"

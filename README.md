@@ -4,10 +4,11 @@ Peer-to-peer git over an encrypted, post-quantum transport. A repository is
 identified by a `swarm://` link; any peer that can reach a holder of that link
 can clone it. No server registration and no accounts.
 
-This tree currently implements milestones M0 to M3: core types, the local
+This tree currently implements milestones M0 to M5: core types, the local
 daemon/CLI/remote helper, the encrypted wire protocol with clone, push and
-pull between peers, and LAN multicast discovery, so a bare `swarm://<repo>`
-link clones from any seeder on the same network segment.
+pull between peers, LAN multicast discovery, the Mainline DHT (a bare
+`swarm://<repo>` link clones from any reachable seeder), and peer exchange,
+seeding, `Announce` forwarding and multi-peer fetch.
 
 ## Try two peers in Docker
 
@@ -39,6 +40,8 @@ docker compose run --rm dev bash -c 'cargo fmt --all -- --check'
 
 docker compose run --rm dev bash -c 'tests/e2e/m1.sh'
 docker compose run --rm dev bash -c 'tests/e2e/m2.sh'
+docker compose run --rm dev bash -c 'tests/e2e/dht.sh'   # M4, local DHT testnet
+docker compose run --rm dev bash -c 'tests/e2e/m5.sh'    # M5, relay, PEX, seeders
 ```
 
 The full milestone gate (fmt, clippy, tests and every e2e script, including
@@ -54,7 +57,8 @@ scripts/ci.sh
 - `crates/swarm-core` - types, canonical CBOR, manifests, resolve, hybrid PQ.
 - `crates/swarm-store` - `$SWARM_HOME`, sqlite, bare git stores.
 - `crates/swarm-net` - Noise + ML-KEM handshake, ChaCha framing, messages.
-- `crates/swarm-disc` - link-hint and LAN multicast discovery.
+- `crates/swarm-disc` - link-hint, LAN multicast and Mainline DHT discovery,
+  plus the `swarm-dht-testnet` helper.
 - `crates/swarm-daemon` - IPC daemon, peer listener, sync, publish.
 - `crates/swarm-cli` - the `swarm` binary and `git-remote-swarm` helper.
 - `crates/swarm-testpeer` - hostile peer fixtures for the acceptance tests.

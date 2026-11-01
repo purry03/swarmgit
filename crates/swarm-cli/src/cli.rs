@@ -11,7 +11,7 @@ use swarm_store::git::{self, Git};
 use swarm_store::{keyio, Home};
 
 mod repo;
-use repo::resolve_repo;
+use repo::{gc, resolve_repo, unseed};
 
 #[derive(Parser)]
 #[command(name = "swarm", version, about = "Zero-setup peer-to-peer git")]
@@ -55,6 +55,14 @@ enum Cmd {
     },
     /// Stop serving a repo but keep its store.
     Unseed {
+        /// A repo ID or link.
+        link: String,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Repack a repo's store and drop unreachable objects, when idle (ST-7).
+    Gc {
         /// A repo ID or link.
         link: String,
         /// Print one JSON object on stdout.
@@ -354,30 +362,6 @@ async fn seed(link: &str, json_output: bool) -> i32 {
     .await
 }
 
-async fn unseed(link: &str, json_output: bool) -> i32 {
-    let (repo, _) = match parse_link(link) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("swarm: {err}");
-            return 2;
-        }
-    };
-    with_client(async move {
-        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
-        let mut client = Client::connect(home).await?;
-        let result = client
-            .call("unseed", json!({ "repo": repo.to_base32() }))
-            .await?;
-        if json_output {
-            println!("{}", json!({ "repo": repo.to_base32(), "unseed": result }));
-        } else {
-            println!("swarm://{}", repo.to_base32());
-        }
-        Ok(0)
-    })
-    .await
-}
-
 async fn fork(link: &str, json_output: bool) -> i32 {
     let (repo, hints) = match parse_link(link) {
         Ok(value) => value,
@@ -572,6 +556,7 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Status { json, repo } => status(json, repo).await,
         Cmd::Seed { link, json } => seed(&link, json).await,
         Cmd::Unseed { link, json } => unseed(&link, json).await,
+        Cmd::Gc { link, json } => gc(&link, json).await,
         Cmd::Fork { link, json } => fork(&link, json).await,
         Cmd::Key {
             command: KeyCmd::Backup { repo, output },
