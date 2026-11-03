@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+#
+# Packaging image for scripts/package.sh: builds the release `swarm` binary and
+# wraps it in .deb and .rpm packages. Kept separate from Dockerfile.dev so the
+# e2e tooling (tcpdump, iptables, python) is not pulled into a packaging run.
+#
+# Build from the repository root; scripts/package.sh does this for you:
+#   docker build -f Dockerfile.package -t swarmgit-package .
+
+FROM rust:1-slim-bookworm
+
+# Run as the host user so files written through the bind mount (target/,
+# dist/) stay owned by the host rather than root.
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Rust build toolchain plus the two package builders. `rpm` on Debian provides
+# rpmbuild; dpkg-deb is part of the base dpkg package.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential pkg-config cmake clang libclang-dev llvm lld \
+      git ca-certificates dpkg-dev rpm file \
+ && rm -rf /var/lib/apt/lists/*
+
+# rust-toolchain.toml asks for these; bake them in so a packaging run does not
+# hit the network for components.
+RUN rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+
+RUN if [ "$USER_ID" -ne 0 ]; then \
+        groupadd --gid "$GROUP_ID" builder \
+        && useradd --uid "$USER_ID" --gid "$GROUP_ID" --create-home --shell /bin/bash builder; \
+    fi \
+ && mkdir -p /usr/local/cargo/registry /usr/local/cargo/git \
+ && chown -R "$USER_ID:$GROUP_ID" /usr/local/cargo /usr/local/rustup
+
+ENV CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_TERM_COLOR=always
+
+USER ${USER_ID}:${GROUP_ID}
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

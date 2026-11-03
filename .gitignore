@@ -1,5 +1,6 @@
 # Build output
 /target/
+/dist/
 /fuzz/target/
 
 # Fuzzing run artifacts and generated corpus

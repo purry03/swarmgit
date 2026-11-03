@@ -52,6 +52,22 @@ container:
 scripts/ci.sh
 ```
 
+## Packages
+
+`scripts/package.sh` builds `.deb` and `.rpm` files inside a dedicated Docker
+image and writes them to `dist/` (gitignored):
+
+```bash
+scripts/package.sh                 # both formats
+scripts/package.sh --deb           # only the .deb
+scripts/package.sh --rpm -o /tmp/pkgs
+VERSION=0.2.0 scripts/package.sh   # override the Cargo.toml version
+```
+
+Both packages install `/usr/bin/swarm` plus the `git-remote-swarm` symlink, and
+depend on `git` and `ca-certificates`. The daemon is started on demand, so no
+systemd unit is shipped.
+
 ## Layout
 
 - `crates/swarm-core` - types, canonical CBOR, manifests, resolve, hybrid PQ.
