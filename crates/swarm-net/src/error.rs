@@ -29,6 +29,9 @@ pub enum NetError {
     /// No peer could be found.
     #[error("no_peers")]
     NoPeers,
+    /// No peer could be reached; says what was tried.
+    #[error("{0}")]
+    NoPeersTried(String),
     /// A pack was rejected or could not be fetched.
     #[error("pack_invalid: {0}")]
     PackInvalid(String),
@@ -66,7 +69,7 @@ impl NetError {
             Self::PqHandshake(_) => "pq_handshake",
             Self::AuthFailed(_) => "auth_failed",
             Self::NoSharedRepo => "no_shared_repo",
-            Self::NoPeers => "no_peers",
+            Self::NoPeers | Self::NoPeersTried(_) => "no_peers",
             Self::PackInvalid(_) => "pack_invalid",
             Self::Malformed(_) => "malformed",
             Self::LimitExceeded(_) => "limit_exceeded",
@@ -85,6 +88,7 @@ impl NetError {
                 | Self::AuthFailed(_)
                 | Self::NoSharedRepo
                 | Self::NoPeers
+                | Self::NoPeersTried(_)
                 | Self::PackInvalid(_)
                 | Self::Timeout(_)
                 | Self::Closed

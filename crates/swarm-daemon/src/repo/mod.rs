@@ -21,6 +21,7 @@ use swarm_store::RepoStore;
 
 use crate::protocol::IpcError;
 use crate::state::DaemonState;
+use crate::sync::progress::Progress;
 
 pub(crate) fn now() -> i64 {
     SystemTime::now()
@@ -88,10 +89,10 @@ pub async fn init_repo(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
     let dir = std::fs::canonicalize(raw)
         .map_err(|err| IpcError::new("malformed", format!("cannot open git_dir: {err}")))?;
     let worktree = Git::worktree(&dir);
-    if !git::is_git_worktree(&dir).await {
+    if let Err(err) = worktree.output(&["rev-parse", "--git-dir"]).await {
         return Err(IpcError::new(
             "malformed",
-            format!("{} is not a git repository", dir.display()),
+            format!("{} is not a usable git repository: {err}", dir.display()),
         ));
     }
     if worktree
@@ -191,13 +192,17 @@ pub async fn init_repo(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
 }
 
 /// `sync`: link-hint sync plus cached peers, then a local resolve fallback.
-pub async fn sync(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
+pub async fn sync(
+    state: &DaemonState,
+    args: &Value,
+    progress: &Progress,
+) -> Result<Value, IpcError> {
     let repo = parse_repo(arg_str(args, "repo")?)?;
     let hints = arg_hints(args);
     let net = state
         .net()
         .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
-    let outcome = crate::sync::sync_repo(net, repo, hints)
+    let outcome = crate::sync::sync_repo(net, repo, hints, progress)
         .await
         .map_err(net_error)?;
     let ref_list: serde_json::Map<String, Value> = outcome

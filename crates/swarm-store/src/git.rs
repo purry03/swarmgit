@@ -445,7 +445,11 @@ pub async fn push_ref(
 ///
 /// The helper process inherits `GIT_DIR` from git, so this deliberately runs
 /// without `-C` and lets the environment select the destination repository.
-pub async fn fetch_oids_inherited(store: &Path, oids: &[String]) -> Result<(), StoreError> {
+pub async fn fetch_oids_inherited(
+    store: &Path,
+    oids: &[String],
+    progress: bool,
+) -> Result<(), StoreError> {
     if oids.is_empty() {
         return Ok(());
     }
@@ -457,12 +461,22 @@ pub async fn fetch_oids_inherited(store: &Path, oids: &[String]) -> Result<(), S
         "-c",
         "transfer.fsckObjects=true",
         "fetch",
-        "--quiet",
+        if progress { "--progress" } else { "--quiet" },
         "--no-tags",
         store.as_str(),
     ]);
     for oid in oids {
         cmd.arg(oid);
+    }
+    if progress {
+        // Let git draw its own progress on the user's terminal. Stdout is the
+        // helper protocol channel, so keep git off it.
+        cmd.stdin(Stdio::null()).stdout(Stdio::null());
+        let status = cmd.status().await?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(StoreError::Git(format!("git fetch failed: {status}")));
     }
     let output = cmd.output().await?;
     finish(output, "git fetch").await.map(|_| ())

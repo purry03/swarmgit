@@ -86,6 +86,22 @@ fn spawn_daemon(home: &Home) -> Result<(), ClientError> {
         .stdin(Stdio::null())
         .stdout(log)
         .stderr(stderr);
+    // Autostart often happens inside a git remote helper, where git exports
+    // variables that pin every git command to the repo being cloned. The
+    // daemon works on many repos, so it must not inherit them.
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+        "GIT_CEILING_DIRECTORIES",
+    ] {
+        command.env_remove(key);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -122,7 +138,11 @@ async fn open_or_start(home: &Home, autostart: bool) -> Result<UnixStream, Clien
     )))
 }
 
-async fn read_reply(reader: &mut BufReader<UnixStream>, id: u64) -> Result<Response, ClientError> {
+async fn read_reply(
+    reader: &mut BufReader<UnixStream>,
+    id: u64,
+    on_event: &mut dyn FnMut(&Value),
+) -> Result<Response, ClientError> {
     loop {
         let mut line = String::new();
         let read = reader.read_line(&mut line).await?;
@@ -135,6 +155,13 @@ async fn read_reply(reader: &mut BufReader<UnixStream>, id: u64) -> Result<Respo
         let value: Value =
             serde_json::from_str(&line).map_err(|err| ClientError::Protocol(err.to_string()))?;
         if value.get("event").is_some() {
+            if value
+                .get("id")
+                .and_then(Value::as_u64)
+                .is_none_or(|got| got == id)
+            {
+                on_event(&value);
+            }
             continue;
         }
         let response: Response =
@@ -198,6 +225,17 @@ impl Client {
 
     /// Send one command and wait for its reply.
     pub async fn call(&mut self, cmd: &str, args: Value) -> Result<Value, ClientError> {
+        self.call_with_events(cmd, args, &mut |_| {}).await
+    }
+
+    /// Like [`Client::call`], handing each progress event the daemon sends
+    /// before its reply to `on_event`.
+    pub async fn call_with_events(
+        &mut self,
+        cmd: &str,
+        args: Value,
+        on_event: &mut dyn FnMut(&Value),
+    ) -> Result<Value, ClientError> {
         let id = self.next_id;
         self.next_id += 1;
         let request = Request {
@@ -210,7 +248,7 @@ impl Client {
         line.push(b'\n');
         self.reader.get_mut().write_all(&line).await?;
         self.reader.get_mut().flush().await?;
-        let response = read_reply(&mut self.reader, id).await?;
+        let response = read_reply(&mut self.reader, id, on_event).await?;
         if response.ok {
             return Ok(response.result.unwrap_or(Value::Null));
         }

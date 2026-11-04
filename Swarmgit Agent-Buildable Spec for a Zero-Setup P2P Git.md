@@ -703,6 +703,7 @@ An address in `Peers` is a byte string: one kind byte, then the address bytes, t
 - Outbound dialing always works from behind NAT, so any client can clone from a reachable seeder. Two peers that are both behind NAT cannot connect directly in v1.
 - Best effort port mapping with `igd-next` (UPnP or NAT-PMP) at daemon start, M5. Failure is silent.
 - A reachable always-on seeder, such as `swarm seed <link>` on a cheap VPS, is the supported fix for the both-behind-NAT case.
+- REACH-1. When no address can be dialed, `sync` fails with `no_peers` and a message that says how many addresses were tried, how many timed out or were refused, and how many the DHT returned. The message also says that the peer may be offline or behind NAT or mobile data, and suggests a shared network or VPN, or a seed with a forwarded port. A bare "no peers" is not acceptable.
 - UDP hole punching and relay-through-peer are out of scope until M9. Keep them behind the `Transport` trait so they can be added without touching sync code.
 
 ## 8. Sync with git
@@ -742,6 +743,8 @@ sync(repo):
     set last_sync, emit event "synced"
 ```
 
+Progress events (SYNC-7 to SYNC-10) are emitted at each step of this loop.
+
 Rules:
 
 - SYNC-1. Never wait for all peers. Start fetching as soon as one valid manifest is accepted. Keep collecting heads in the background and re-run if a newer `seq` appears.
@@ -750,6 +753,10 @@ Rules:
 - SYNC-4. If a peer's `Heads` carries a `seq` lower than one already stored for the same signer, that peer is stale. Do not drop it, but prefer other peers for `Want`.
 - SYNC-5. Run at most one sync per repo at a time. A new trigger during a sync sets a dirty flag and causes one more pass.
 - SYNC-6. If no peer is found within `find_timeout` and the store has no refs, fail with `no_peers`. If the store has refs, return success with `state: stale` so offline reads still work.
+- SYNC-7. When the request has `progress: true`, `sync` streams events (9.3) at these steps: looking for peers; how many addresses came from the link and from the cache; already connected to N peers; searching the DHT and how many addresses it returned; waiting for the local network, with a countdown; connected to N peers; downloading objects; checking and indexing the objects; download complete.
+- SYNC-8. Dial output must scale to hundreds of peers. Per-address results are `detail` events, shown only at verbosity 2 or higher. The default view is one live counter line (`dials`: connected, failed, trying, queued), plus byte progress for packs.
+- SYNC-9. Dial candidates exclude IPv6 link-local addresses (`fe80::/10`) from the cache and from peer exchange, since they cannot be dialed without a scope id. A candidate whose node already has an open session is not dialed again, and the sync says so.
+- SYNC-10. Pack progress carries `done` and `total` bytes, with `total` null when the sender gave no size.
 
 ### 8.3 Remote helper protocol
 
@@ -760,7 +767,7 @@ Rules:
 | `capabilities` | nothing | `option`, `fetch`, `push`, then an empty line |
 | `option verbosity N` and similar | store the value | `ok`, or `unsupported` for options it ignores |
 | `list` or `list for-push` | IPC `sync <repo>`; read the store's refs | one line per ref: `<oid> <refname>`, then `@<branch> HEAD` for the default branch, then an empty line |
-| `fetch <oid> <refname>` lines, ended by an empty line | run `git fetch --quiet --no-tags <store-path> <oid>` once for the whole batch, with `GIT_DIR` set | an empty line when done |
+| `fetch <oid> <refname>` lines, ended by an empty line | print `swarm: cloning repo from local daemon`, then run `git fetch --no-tags <store-path> <oid>` once for the whole batch, with `GIT_DIR` set (`--progress` when git sent `option progress true`, else `--quiet`) | an empty line when done |
 | `push <src>:<dst>` lines, ended by an empty line | for each, run `git push <store-path> <src>:<dst>` (force when the line starts with `+`), then IPC `publish <repo>` | `ok <dst>` or `error <dst> <reason>` per ref, then an empty line |
 
 Notes:
@@ -769,6 +776,8 @@ Notes:
 - HELP-2. `git fetch` from a local path needs the tip OIDs to be advertised. The store's refs equal the canonical refs (ST-3), so they are.
 - HELP-3. Push to a repo without a signing key returns `error <dst> no signing key (use: git swarm fork)` and exits 0. Do not crash.
 - HELP-4. The helper prints progress to stderr only. Anything else on stdout breaks git.
+- HELP-6. `option progress true` and `option verbosity N` are accepted. `list` sends `sync` with `progress: true` and renders the events on stderr: messages at verbosity 1 or higher, `detail` events at 2 or higher, and live lines (`finding peers: N connected, M failed`, `receiving X of Y (N%)`) only when progress is on. A live line is ended with a newline before the next message.
+- HELP-7. The `fetch` step reuses the store path from the preceding `list`, so it does not sync twice.
 - HELP-5. The helper never opens a network socket. Only the daemon does.
 
 ### 8.4 Fork and ownership transfer
@@ -812,7 +821,7 @@ Exit codes: `0` success, `1` generic error, `2` usage error, `3` no peers, `4` n
 ### 9.2 Daemon lifecycle
 
 - DMN-1. One daemon per `SWARM_HOME`. Hold an exclusive `flock` on `$SWARM_HOME/daemon.lock` for the process lifetime. A second instance exits at once with code 0.
-- DMN-2. Autostart: the CLI and the helper connect to the IPC socket. On connection refused or missing socket, spawn `swarm daemon --detach` (new session, stdio to `$SWARM_HOME/daemon.log`), then retry the connection up to 20 times, 100 ms apart. If that fails, exit with code 5 and print the log path.
+- DMN-2. Autostart: the CLI and the helper connect to the IPC socket. On connection refused or missing socket, spawn `swarm daemon --detach` (new session, stdio to `$SWARM_HOME/daemon.log`), then retry the connection up to 20 times, 100 ms apart. The spawn removes `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_PREFIX` and `GIT_CEILING_DIRECTORIES` from the daemon's environment, because autostart often happens inside a git remote helper and the daemon serves many repos. If that fails, exit with code 5 and print the log path.
 - DMN-3. IPC socket: `$SWARM_HOME/ipc.sock` with mode 0600 on Unix. If the path is over 100 bytes, use `$XDG_RUNTIME_DIR/swarmgit-<first 8 hex of blake3(SWARM_HOME)>.sock`. On Windows use the named pipe `\\.\pipe\swarmgit-<username>`.
 - DMN-4. The first IPC call is `hello`. If the daemon's version differs from the client's, the client runs `daemon stop` and autostarts again.
 - DMN-5. On start: open sqlite, remove `refs/swarm/*` in every store, start the listener, start discovery for every seeded repo, then announce.
@@ -821,12 +830,12 @@ Exit codes: `0` success, `1` generic error, `2` usage error, `3` no peers, `4` n
 
 ### 9.3 IPC protocol
 
-Newline-delimited JSON over the local socket. Each request is one line `{"id": N, "cmd": "...", "args": {...}}`. Each reply is one line `{"id": N, "ok": true, "result": {...}}` or `{"id": N, "ok": false, "error": {"code": "...", "msg": "..."}}`. Long commands may first emit lines `{"id": N, "event": "progress", "data": {...}}`. Error codes are those in 5.7 and 7.3.
+Newline-delimited JSON over the local socket. Each request is one line `{"id": N, "cmd": "...", "args": {...}}`. Each reply is one line `{"id": N, "ok": true, "result": {...}}` or `{"id": N, "ok": false, "error": {"code": "...", "msg": "..."}}`. Long commands may first emit event lines before the reply. A client skips any line that has an `event` key and either no `id` or another request's `id`. Only `sync` with `"progress": true` streams events. Progress event fields: `stage`, `msg`, `detail` (true for per-address lines), `dials` (`connected`, `failed`, `trying`, `queued`), and for packs `done` and `total`. Error codes are those in 5.7 and 7.3.
 
 | `cmd` | `args` | `result` |
 | --- | --- | --- |
 | `hello` | `client_version` | `daemon_version`, `home`, `port` |
-| `init_repo` | `git_dir` | `repo_id`, `link` |
+| `init_repo` | `git_dir` (must pass `git rev-parse --git-dir`; otherwise `malformed`, with git's own error in the message) | `repo_id`, `link` |
 | `sync` | `repo`, `hints` (optional array) | `state` (`fresh` or `stale`), `refs` (count), `head` |
 | `publish` | `repo` | `seq`, `manifest_id` or `noop: true` |
 | `repo_info` | `repo` | `store_path`, `seq`, `has_key`, `seeding`, `conflicts` |
@@ -840,8 +849,9 @@ Newline-delimited JSON over the local socket. Each request is one line `{"id": N
 Example:
 
 ```text
-> {"id": 1, "cmd": "sync", "args": {"repo": "<52-char id>"}}
-< {"id": 1, "event": "progress", "data": {"peers": 2, "phase": "fetching"}}
+> {"id": 1, "cmd": "sync", "args": {"repo": "<52-char id>", "progress": true}}
+< {"id": 1, "event": "progress", "stage": "dial", "dials": {"connected": 1, "failed": 3, "trying": 0, "queued": 0}}
+< {"id": 1, "event": "progress", "stage": "pack", "done": 3145728, "total": 7643136}
 < {"id": 1, "ok": true, "result": {"state": "fresh", "refs": 12, "head": "refs/heads/main"}}
 ```
 

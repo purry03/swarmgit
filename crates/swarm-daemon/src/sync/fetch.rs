@@ -11,6 +11,8 @@ use swarm_store::RepoStore;
 use tokio::task::JoinSet;
 
 use super::dial::Connected;
+use super::progress::{Progress, Transfer};
+use std::sync::Arc;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const PACK_CHUNK: usize = 256 * 1024;
@@ -68,6 +70,8 @@ async fn fetch_pack(
     wants: Vec<Oid>,
     haves: Vec<Oid>,
     max_bytes: usize,
+    progress: Progress,
+    transfer: Arc<Transfer>,
 ) -> Result<Vec<u8>, NetError> {
     let mut stream = handle
         .request_stream(
@@ -90,6 +94,9 @@ async fn fetch_pack(
                 if size_hint.is_some_and(|size| size as usize > max_bytes) {
                     return Err(NetError::LimitExceeded("pack is too large".into()));
                 }
+                if let Some(size) = size_hint {
+                    transfer.expect(size);
+                }
             }
             Message::PackData {
                 chunk, final_chunk, ..
@@ -101,6 +108,8 @@ async fn fetch_pack(
                     return Err(NetError::LimitExceeded("pack is too large".into()));
                 }
                 pack.extend_from_slice(&chunk);
+                let (done, total) = transfer.add(chunk.len() as u64);
+                progress.bytes(done, total);
                 if final_chunk {
                     break;
                 }
@@ -150,7 +159,9 @@ pub async fn fetch_missing(
     missing_now: impl Fn() -> Vec<Oid>,
     haves: Vec<Oid>,
     max_bytes: usize,
+    progress: &Progress,
 ) -> Result<(), NetError> {
+    let transfer = Transfer::new();
     let mut last_error: Option<NetError> = None;
     loop {
         let missing = missing_now();
@@ -170,22 +181,26 @@ pub async fn fetch_missing(
             };
             let handle = peers[*ix].handle.clone();
             let (ix, wants, haves) = (*ix, wants.clone(), haves.clone());
+            let (progress, transfer) = (progress.clone(), Arc::clone(&transfer));
             set.spawn(async move {
                 (
                     ix,
-                    fetch_pack(handle, repo_ix, wants, haves, max_bytes).await,
+                    fetch_pack(handle, repo_ix, wants, haves, max_bytes, progress, transfer).await,
                 )
             });
         }
         while let Some(joined) = set.join_next().await {
             let Ok((ix, result)) = joined else { continue };
             let indexed = match result {
-                Ok(pack) => store
-                    .git()
-                    .index_pack_limited(&pack, max_bytes)
-                    .await
-                    .map(|_| ())
-                    .map_err(|err| NetError::PackInvalid(err.to_string())),
+                Ok(pack) => {
+                    progress.say("index", "checking and indexing the objects");
+                    store
+                        .git()
+                        .index_pack_limited(&pack, max_bytes)
+                        .await
+                        .map(|_| ())
+                        .map_err(|err| NetError::PackInvalid(err.to_string()))
+                }
                 Err(err) => Err(err),
             };
             if let Err(err) = indexed {

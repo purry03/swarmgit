@@ -16,6 +16,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
 use super::NetState;
+use crate::sync::progress::Progress;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -212,7 +213,9 @@ async fn serve_message(
                         // sessions, then forward the announce once (7.4): a
                         // repeat is no longer fresh, so it stops here. A
                         // sync that fails forwards nothing we cannot serve.
-                        match crate::sync::sync_repo(&net, repo, Vec::new()).await {
+                        match crate::sync::sync_repo(&net, repo, Vec::new(), &Progress::none())
+                            .await
+                        {
                             Ok(_) => net.announce(repo, envelope).await,
                             Err(err) => {
                                 tracing::debug!(error = %err, "sync after announce failed");

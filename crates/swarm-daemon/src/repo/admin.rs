@@ -13,6 +13,7 @@ use swarm_store::RepoStore;
 use super::{arg_hints, arg_str, db_repo, net_error, now, parse_repo, root_seq};
 use crate::protocol::IpcError;
 use crate::state::DaemonState;
+use crate::sync::progress::Progress;
 
 /// `repo_info`: what the remote helper needs to know.
 pub async fn repo_info(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
@@ -147,7 +148,7 @@ pub async fn fork(state: &DaemonState, args: &Value) -> Result<Value, IpcError> 
     let net = state
         .net()
         .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
-    let outcome = crate::sync::sync_repo(net, source, hints)
+    let outcome = crate::sync::sync_repo(net, source, hints, &Progress::none())
         .await
         .map_err(net_error)?;
     let source_store = RepoStore::new(state.home.clone(), source);

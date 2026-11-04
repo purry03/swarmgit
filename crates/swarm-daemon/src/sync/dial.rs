@@ -11,6 +11,7 @@ use swarm_net::{Message, NetError, Session, SessionHandle};
 use tokio::net::TcpStream;
 use tokio::task::JoinSet;
 
+use super::progress::Progress;
 use crate::net::NetState;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -55,6 +56,48 @@ impl Connected {
 pub struct Failures {
     pub auth: bool,
     pub no_shared: bool,
+    /// Addresses dialed.
+    pub tried: usize,
+    /// Dials that got no answer in time.
+    pub timed_out: usize,
+    /// Dials the other side actively refused or that failed at the network.
+    pub unreachable: usize,
+}
+
+impl Failures {
+    /// One line on what the dials ran into.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        if self.tried == 0 {
+            return "no addresses to try".to_string();
+        }
+        let other = self.tried.saturating_sub(self.timed_out + self.unreachable);
+        let mut parts = Vec::new();
+        if self.timed_out > 0 {
+            parts.push(format!("{} timed out", self.timed_out));
+        }
+        if self.unreachable > 0 {
+            parts.push(format!("{} unreachable or refused", self.unreachable));
+        }
+        if other > 0 {
+            parts.push(format!("{other} failed"));
+        }
+        format!("tried {} address(es): {}", self.tried, parts.join(", "))
+    }
+}
+
+/// A short reason a dial failed, for the user.
+fn reason(err: &NetError) -> String {
+    match err {
+        NetError::Timeout(_) => "no answer (timed out)".to_string(),
+        NetError::Io(io) => match io.kind() {
+            std::io::ErrorKind::ConnectionRefused => "connection refused".to_string(),
+            kind => format!("{kind}"),
+        },
+        NetError::NoSharedRepo => "peer does not have this repo".to_string(),
+        NetError::AuthFailed(_) => "authentication failed".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Dial bookkeeping for one sync.
@@ -62,11 +105,14 @@ pub struct Dialer {
     pub connected: Vec<Connected>,
     pub failures: Failures,
     tried: Vec<PeerAddr>,
+    progress: Progress,
+    ok: usize,
+    failed: usize,
 }
 
 impl Dialer {
     /// Start from the sessions that are already open for `repo` (7.4).
-    pub fn new(net: &NetState, repo: RepoId) -> Self {
+    pub fn new(net: &NetState, repo: RepoId, progress: Progress) -> Self {
         let mut connected: Vec<Connected> = Vec::new();
         for handle in net.sessions_for(repo) {
             let node = handle.info().node_id;
@@ -79,6 +125,9 @@ impl Dialer {
             connected,
             failures: Failures::default(),
             tried: Vec::new(),
+            progress,
+            ok: 0,
+            failed: 0,
         }
     }
 
@@ -107,6 +156,11 @@ impl Dialer {
             while set.len() < MAX_DIALS && self.connected.len() < limit {
                 let Some(candidate) = queue.pop() else { break };
                 self.tried.push(candidate.addr.clone());
+                self.failures.tried += 1;
+                self.progress
+                    .detail("dial", format!("trying {}", candidate.addr));
+                self.progress
+                    .dials(self.ok, self.failed, set.len() + 1, queue.len());
                 let net = Arc::clone(net);
                 set.spawn(async move {
                     let result = dial(&net, repo, &candidate).await;
@@ -123,6 +177,8 @@ impl Dialer {
                     if self.has_node(Some(node)) {
                         continue;
                     }
+                    self.ok += 1;
+                    self.progress.detail("dial", format!("connected to {addr}"));
                     added.push(self.connected.len());
                     self.connected.push(Connected::new(handle));
                 }
@@ -130,9 +186,19 @@ impl Dialer {
                     net.peer_fail(repo, &addr);
                     self.failures.auth |= matches!(err, NetError::AuthFailed(_));
                     self.failures.no_shared |= matches!(err, NetError::NoSharedRepo);
+                    match &err {
+                        NetError::Timeout(_) => self.failures.timed_out += 1,
+                        NetError::Io(_) => self.failures.unreachable += 1,
+                        _ => {}
+                    }
+                    self.failed += 1;
+                    self.progress
+                        .detail("dial", format!("{addr}: {}", reason(&err)));
                     tracing::debug!(peer = %addr, code = err.code(), error = %err, "sync peer failed");
                 }
             }
+            self.progress
+                .dials(self.ok, self.failed, set.len(), queue.len());
             if self.connected.len() >= limit {
                 // Sessions that still finish stay registered for later use.
                 set.detach_all();
@@ -185,6 +251,24 @@ pub fn cached_candidates(net: &NetState, repo: RepoId) -> Vec<Candidate> {
                 node: row.node_id.map(NodeId::from_bytes),
             })
         })
+        .collect()
+}
+
+/// True for addresses that only work on one physical network: IPv6
+/// link-local (`fe80::/10`). Remembered or exchanged ones are useless from
+/// another network, so only the LAN route may offer them.
+fn is_link_local(addr: &PeerAddr) -> bool {
+    match addr.socket().ip() {
+        std::net::IpAddr::V6(ip) => ip.segments()[0] & 0xffc0 == 0xfe80,
+        std::net::IpAddr::V4(_) => false,
+    }
+}
+
+/// Drop link-local addresses from `candidates`.
+pub fn without_link_local(candidates: Vec<Candidate>) -> Vec<Candidate> {
+    candidates
+        .into_iter()
+        .filter(|candidate| !is_link_local(&candidate.addr))
         .collect()
 }
 

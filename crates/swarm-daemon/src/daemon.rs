@@ -16,6 +16,7 @@ use crate::handlers;
 use crate::net::{self, NetState};
 use crate::protocol::{Request, Response};
 use crate::state::DaemonState;
+use crate::sync::progress::Progress;
 
 async fn ensure_node_key(home: &Home) -> anyhow::Result<Arc<NodeKey>> {
     let path = home.node_key_path();
@@ -40,6 +41,26 @@ fn acquire_lock(home: &Home) -> anyhow::Result<Option<std::fs::File>> {
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
         Err(err) => Err(err.into()),
     }
+}
+
+/// The next progress event, or never when nothing reports progress.
+async fn next_event(
+    events: &mut Option<tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>>,
+) -> Option<serde_json::Value> {
+    match events {
+        Some(events) => events.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn write_line(
+    write_half: &mut tokio::net::unix::OwnedWriteHalf,
+    value: &serde_json::Value,
+) -> std::io::Result<()> {
+    let mut bytes = serde_json::to_vec(value)?;
+    bytes.push(b'\n');
+    write_half.write_all(&bytes).await?;
+    write_half.flush().await
 }
 
 async fn handle_connection(state: Arc<DaemonState>, stream: UnixStream) {
@@ -73,7 +94,41 @@ async fn handle_connection(state: Arc<DaemonState>, stream: UnixStream) {
             }
         };
         let stop = handlers::is_stop(&request.cmd);
-        let response = handlers::handle(&state, request).await;
+        let id = request.id;
+        let (progress, mut events) = if handlers::wants_progress(&request) {
+            let (progress, events) = Progress::channel();
+            (progress, Some(events))
+        } else {
+            (Progress::none(), None)
+        };
+        let response = {
+            let work = handlers::handle_with(&state, request, progress);
+            tokio::pin!(work);
+            loop {
+                tokio::select! {
+                    response = &mut work => break response,
+                    event = next_event(&mut events) => match event {
+                        Some(mut event) => {
+                            event["id"] = id.into();
+                            if write_line(&mut write_half, &event).await.is_err() {
+                                state.client_left();
+                                return;
+                            }
+                        }
+                        None => events = None,
+                    },
+                }
+            }
+        };
+        // Events sent just before the work finished.
+        if let Some(mut rest) = events {
+            while let Ok(mut event) = rest.try_recv() {
+                event["id"] = id.into();
+                if write_line(&mut write_half, &event).await.is_err() {
+                    break;
+                }
+            }
+        }
         let mut bytes = match serde_json::to_vec(&response) {
             Ok(bytes) => bytes,
             Err(_) => break,
@@ -167,7 +222,9 @@ async fn seeded_sync_loop(state: Arc<DaemonState>) {
             db.repos().unwrap_or_default()
         };
         for row in repos.into_iter().filter(|row| row.seeding) {
-            if let Err(err) = crate::sync::sync_repo(&net, row.id, Vec::new()).await {
+            if let Err(err) =
+                crate::sync::sync_repo(&net, row.id, Vec::new(), &Progress::none()).await
+            {
                 tracing::debug!(code = err.code(), error = %err, "seeded sync failed");
             }
         }

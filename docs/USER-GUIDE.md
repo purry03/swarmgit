@@ -2,8 +2,11 @@
 
 Swarmgit is a peer-to-peer git remote. A repository has a `swarm://` link; any
 peer that can reach one holder of that link can clone it. There is no server to
-register with and no account. M2 adds an encrypted wire protocol and the two
-commands a seeder needs: `swarm seed` and `swarm unseed`.
+register with and no account. Peers talk over an encrypted, authenticated
+channel and find each other through link hints, peers they already know, LAN
+multicast, the Mainline DHT and peer exchange. A push is announced to
+connected peers, and seeders keep a repo available after its author goes
+offline.
 
 This guide starts two peers in Docker so you can try a clone, a push and a pull
 without touching your host toolchain.
@@ -156,12 +159,25 @@ git pull --no-rebase swarm main
 without it git can report divergent branches. `git fetch swarm main` followed
 by `git merge --ff-only FETCH_HEAD` is equivalent.
 
-### Why A pulls from B explicitly
+### How a push reaches the other peer
 
 `git push` publishes into the **local** daemon's store. The remote URL is used
-for the sync that happens before a push, not as the publication target. So the
-push from B leaves the new manifest on B. A reads it by fetching B's link. For
-a long-lived workflow you can add B as a second remote on A:
+for the sync that happens before a push, not as the publication target. The
+daemon then sends an `Announce` with the new signed manifest on every open
+session that shares the repo. A peer that receives it checks the signature,
+fetches the missing objects, stores the manifest and forwards the
+announcement once to its own other sessions. A push therefore spreads through
+connected peers within seconds, with no polling.
+
+Sessions stay open while both daemons run: an idle session is pinged after
+30 s and closed only after 90 s without any answer. So after B's clone, B's
+push usually lands in A's daemon store on its own, and on A a plain
+`git pull --no-rebase swarm main` picks it up. Your worktree never changes by
+itself; only the daemon store does.
+
+If no session is open (a daemon restarted, or the peers never connected),
+fetch the other peer's link directly, as above. For a long-lived workflow you
+can add B as a second remote on A:
 
 ```bash
 git remote add peer-b '<B link>'
@@ -193,14 +209,64 @@ SWARM_HOME=/state/home SWARM_LISTEN=0.0.0.0:42424 SWARM_ADVERTISE=seeder.example
 ```
 
 The daemon serves every seeded repo whose store exists. `swarm unseed <link>`
-stops serving one but keeps its store. A newly seeded repo is synced again
-every five minutes.
+stops serving one but keeps its store. A seeding daemon:
+
+- syncs every seeded repo every 5 minutes, and at once when a connected peer
+  announces a newer manifest;
+- announces the repo on the LAN every 60 s and on the DHT every 15 minutes;
+- refreshes the repo's DHT head pointer after every publish and every hour,
+  when it holds the signing key;
+- does not exit when idle (an unseeded daemon stops after
+  `SWARM_IDLE_EXIT_MINUTES`).
+
+A seeder can relay: if A seeds, B seeds from A and A goes offline, a new
+peer C still clones from B, through the DHT or a hint for B.
 
 `swarm fork <link>` creates a new, independent repo (new key and repo ID) from
 the current state of an existing one. Its first manifest records
 `forked_from`; the source repo is unchanged.
 
-## 7. Configuration
+## 7. How peers find each other
+
+A sync collects candidates from every route at once, drops its own node and
+duplicate addresses, and dials up to 8 at a time until 4 sessions carry the
+repo:
+
+| Route | Source | Notes |
+| --- | --- | --- |
+| Hints | `h=tcp:host:port[@node]` in the link | Pinned when `@node` is present. |
+| Known peers | the `peers` table in `swarm.db` | Filled by earlier syncs, best first; keeps trust-on-first-use pins. |
+| LAN | UDP multicast on port 42099 | Same network segment only. |
+| DHT | Mainline DHT lookup | Works with no hint at all; needs outbound UDP. |
+| Peer exchange | `GetPeers` on every open session | Up to 32 addresses per reply, stored pinned when they carry a node ID. |
+
+Peer exchange means a hint for one seeder is enough: the client learns the
+others, keeps them in its `peers` table, and still reaches them after the
+first seeder goes away.
+
+**Multi-peer fetch.** Missing objects are split across the sessions that
+advertise them. If one peer's pack fails or comes back short, that peer is
+dropped and its share moves to the others; packs already stored are kept, so
+a later sync resumes instead of starting over.
+
+**Newest state wins.** Manifests carry a sequence number signed by the root
+key, and a client never moves back to a lower one, even when the only peer it
+can reach is stale. The DHT also holds a signed head pointer with the latest
+seq. When every peer offers less than the head pointer says, the sync keeps
+looking on the DHT (up to 3 more rounds and 4 more sessions) before it
+settles.
+
+**NAT.** The daemon asks a UPnP gateway, if one answers, to forward the
+listen port (one-hour lease, renewed every 30 minutes). Without UPnP, set
+`SWARM_ADVERTISE` and forward the port yourself, or rely on your own
+outbound dials. A node takes an external IP as its own only after two
+different peers report it.
+
+**Storage.** `swarm gc <repo>` repacks a repo's object store. It keeps every
+object reachable from a stored manifest, and fails with `busy` while a sync or
+upload of that repo is running; run it again a moment later.
+
+## 8. Configuration
 
 | Variable | Meaning |
 | --- | --- |
@@ -222,7 +288,7 @@ the current state of an existing one. Its first manifest records
 `$SWARM_HOME/daemon.json` records the actual port, PID and listen address. The
 daemon starts on demand and stops with `swarm daemon stop`.
 
-## 8. CLI summary
+## 9. CLI summary
 
 ```text
 swarm init [--object-format sha1|sha256] [--json]
@@ -236,14 +302,14 @@ swarm gc [--json] <repo>
 swarm daemon [--foreground] | daemon stop
 ```
 
-`swarm gc` repacks a repo's object store when no sync or upload is running; it
-keeps every object reachable from a stored manifest.
+`swarm gc` repacks a repo's object store and keeps every object reachable from
+a stored manifest. It fails with `busy` while a sync or upload is running.
 
 `repo` accepts a base32 repo ID, hex, or a full `swarm://` link. When omitted,
 `swarm` uses the `swarm` remote of the current git repository, or the only
 repo in the daemon.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 **`auth_failed`** — the hint's `@<node-id>` does not match the peer that
 answered, or the peer's key changed. Remove the `@` part to accept a new node
@@ -267,6 +333,19 @@ not set, and that the seeder has run `swarm seed` or pushed the repo. Wi-Fi with
 client isolation blocks it. Add a hint (`swarm link` prints one) if LAN
 is blocked.
 
+**A push did not reach the other peer** — the `Announce` only travels over
+open sessions. Check both daemons are running (`swarm status --json`); a
+seeder catches up on its next 5-minute sync anyway. To get it now, fetch the
+pushing peer's link directly (section 4).
+
+**A clone or fetch ends on an older commit** — every peer it reached was
+behind. With the DHT on, the head pointer makes the sync keep looking for a
+newer peer; with `SWARM_NO_DHT=1` or no UDP it cannot tell. Add a hint for an
+up-to-date peer. A client never moves back to a lower `seq` it already has.
+
+**`busy` from `swarm gc`** — a sync or upload of that repo is running. Retry
+when it has finished.
+
 **`no signing key`** — copy the root key as shown in section 4. `swarm fork`
 also creates a repo you can push to.
 
@@ -276,7 +355,7 @@ also creates a repo you can push to.
 **Start clean** — `docker compose -f compose.peers.yaml down -v` removes both
 state volumes.
 
-## 10. Security notes
+## 11. Security notes
 
 - The TCP channel is Noise XX plus ML-KEM-768, then ChaCha20-Poly1305 frames.
   There is no classical-only fallback.
@@ -288,8 +367,16 @@ state volumes.
   Store the pin after the first contact to close that window.
 - Interest tokens are keyed hashes of the repo ID and handshake hash. The repo
   ID never appears on the wire during a handshake.
+- The repo ID never appears in DHT data. Lookup topics are derived from it per
+  day, and the head pointer's salt is a keyed hash of it, so a DHT observer
+  can follow a topic but cannot read the repo ID from it. Treat the repo ID
+  (and so the `swarm://` link) as a secret: anyone who has it can find and
+  clone the repo.
+- Peer exchange and the DHT only suggest addresses. Every session is still
+  authenticated, and every manifest and object is verified before it is
+  stored or forwarded.
 
-## 11. Testing and development
+## 12. Testing and development
 
 All tests run in the development image:
 

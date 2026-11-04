@@ -29,6 +29,9 @@ struct Helper {
     repo: RepoId,
     hints: Vec<String>,
     verbosity: u64,
+    progress: bool,
+    /// Store path from the `list` sync, reused by `fetch`.
+    synced: Option<PathBuf>,
 }
 
 fn repo_from_url(url: &str) -> Result<RepoId, String> {
@@ -52,6 +55,83 @@ fn hints_from_url(url: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Show one progress event from the daemon on stderr. `bar` tracks whether
+/// a `\r` line is on screen.
+fn show_event(verbosity: u64, progress: bool, bar: &mut bool, event: &Value) {
+    if verbosity < 1 {
+        return;
+    }
+    let live = |bar: &mut bool, line: String| {
+        eprint!("\r{line}\x1b[K");
+        *bar = true;
+    };
+    if let Some(done) = event.get("done").and_then(Value::as_u64) {
+        if !progress {
+            return;
+        }
+        let line = match event.get("total").and_then(Value::as_u64) {
+            Some(total) => format!(
+                "swarm: receiving {} of {} ({}%)",
+                human(done),
+                human(total),
+                done * 100 / total.max(1)
+            ),
+            None => format!("swarm: receiving {}", human(done)),
+        };
+        live(bar, line);
+        return;
+    }
+    if let Some(dials) = event.get("dials") {
+        // One updating line, however many peers there are.
+        if !progress {
+            return;
+        }
+        let n = |key: &str| dials.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let mut line = format!(
+            "swarm: finding peers: {} connected, {} failed",
+            n("connected"),
+            n("failed")
+        );
+        if n("trying") > 0 {
+            line.push_str(&format!(", {} trying", n("trying")));
+        }
+        if n("queued") > 0 {
+            line.push_str(&format!(", {} waiting", n("queued")));
+        }
+        live(bar, line);
+        return;
+    }
+    let detail = event
+        .get("detail")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if detail && verbosity < 2 {
+        return;
+    }
+    if let Some(msg) = event.get("msg").and_then(Value::as_str) {
+        if *bar {
+            eprintln!();
+            *bar = false;
+        }
+        eprintln!("swarm: {msg}");
+    }
+}
+
+fn human(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 fn fail(code: i32) -> ! {
     std::process::exit(code)
 }
@@ -71,6 +151,8 @@ impl Helper {
             repo,
             hints,
             verbosity: 1,
+            progress: false,
+            synced: None,
         }
     }
 
@@ -81,13 +163,21 @@ impl Helper {
     }
 
     async fn sync(&mut self) -> Result<Listing, ClientError> {
-        let value = self
-            .client
-            .call(
-                "sync",
-                json!({ "repo": self.repo.to_base32(), "hints": self.hints }),
-            )
-            .await?;
+        let args = json!({
+            "repo": self.repo.to_base32(),
+            "hints": self.hints,
+            "progress": true,
+        });
+        let (verbosity, progress) = (self.verbosity, self.progress);
+        let mut bar = false;
+        let value = {
+            let mut show = |event: &Value| show_event(verbosity, progress, &mut bar, event);
+            self.client.call_with_events("sync", args, &mut show).await
+        };
+        if bar {
+            eprintln!();
+        }
+        let value = value?;
         let store_path = value
             .get("store_path")
             .and_then(Value::as_str)
@@ -123,6 +213,7 @@ impl Helper {
 
     async fn list(&mut self) -> Result<(), ClientError> {
         let listing = self.sync().await?;
+        self.synced = Some(listing.store_path.clone());
         let mut text = String::new();
         if let Some(format) = &listing.object_format {
             text.push_str(&format!(":object-format {format}\n"));
@@ -146,9 +237,12 @@ impl Helper {
             write_line("").await;
             return Ok(());
         }
-        let listing = self.sync().await?;
-        let store = listing.store_path.clone();
-        match git::fetch_oids_inherited(&store, oids).await {
+        let store = match self.synced.clone() {
+            Some(store) => store,
+            None => self.sync().await?.store_path,
+        };
+        self.note(1, "cloning repo from local daemon");
+        match git::fetch_oids_inherited(&store, oids, self.progress).await {
             Ok(()) => {
                 write_line("").await;
                 Ok(())
@@ -322,6 +416,9 @@ pub async fn run(args: Vec<String>) -> i32 {
             let (name, value) = rest.split_once(' ').unwrap_or((rest, ""));
             if name == "verbosity" {
                 helper.verbosity = value.parse().unwrap_or(1);
+            }
+            if name == "progress" {
+                helper.progress = value == "true";
             }
             write_line("ok").await;
             continue;

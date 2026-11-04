@@ -2,6 +2,7 @@
 
 mod dial;
 mod fetch;
+pub mod progress;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use swarm_store::RepoStore;
 
 use crate::net::NetState;
 use dial::{Candidate, Dialer, MAX_SESSIONS};
+use progress::Progress;
 
 /// Outcome of one sync.
 #[derive(Clone, Debug)]
@@ -52,6 +54,7 @@ pub async fn sync_repo(
     net: &Arc<NetState>,
     repo: RepoId,
     hints: Vec<String>,
+    progress: &Progress,
 ) -> Result<SyncResult, NetError> {
     let lock = net.sync_lock(repo);
     let _guard = lock.lock().await;
@@ -74,6 +77,7 @@ pub async fn sync_repo(
     };
     let has_state = store.exists() || !net_state.signers.is_empty();
 
+    progress.say("find", "looking for peers");
     // Route C runs beside the others and is only waited for when they fall
     // short (DHT-1).
     let mut dht_lookup = Some(tokio::spawn(crate::net::dht::find(net.dht(), repo)));
@@ -86,14 +90,34 @@ pub async fn sync_repo(
             node: candidate.node,
         })
         .collect();
-    candidates.extend(dial::cached_candidates(net, repo));
+    let from_link = candidates.len();
+    let cached = dial::cached_candidates(net, repo);
+    let cached = dial::without_link_local(cached);
+    let from_cache = cached.len();
+    candidates.extend(cached);
+    if from_link + from_cache > 0 {
+        progress.say(
+            "find",
+            format!("{from_link} address(es) from the link, {from_cache} remembered"),
+        );
+    }
+
     let lan = net.lan();
     if let Some(lan) = &lan {
         lan.query(repo);
         candidates.extend(dial::unpinned(lan.candidates(repo)));
     }
 
-    let mut dialer = Dialer::new(net, repo);
+    let mut dialer = Dialer::new(net, repo, progress.clone());
+    if !dialer.connected.is_empty() {
+        progress.say(
+            "find",
+            format!(
+                "already connected to {} peer(s); not dialing them again",
+                dialer.connected.len()
+            ),
+        );
+    }
     dialer
         .dial_all(
             net,
@@ -109,14 +133,18 @@ pub async fn sync_repo(
         .dial_all(
             net,
             repo,
-            dial::dedupe(exchanged, net.node_id),
+            dial::dedupe(dial::without_link_local(exchanged), net.node_id),
             MAX_SESSIONS,
         )
         .await;
 
+    let mut dht_found = 0;
     if dialer.connected.is_empty() {
         if let Some(lookup) = dht_lookup.take() {
+            progress.say("dht", "searching the DHT for peers");
             let found = lookup.await.unwrap_or_default();
+            dht_found = found.len();
+            progress.say("dht", format!("the DHT returned {dht_found} address(es)"));
             dialer
                 .dial_all(
                     net,
@@ -133,12 +161,28 @@ pub async fn sync_repo(
     // (SYNC-6), and just past the burst when we already have state.
     if let (true, Some(lan)) = (dialer.connected.is_empty(), &lan) {
         let deadline = tokio::time::Instant::now() + dial::lan_wait(has_state);
+        progress.say(
+            "lan",
+            format!(
+                "no peer yet; waiting up to {}s for one on the local network",
+                dial::lan_wait(has_state).as_secs().max(1)
+            ),
+        );
+        let mut last_note = tokio::time::Instant::now();
         while dialer.connected.is_empty() {
             let now = tokio::time::Instant::now();
             if now >= deadline {
                 break;
             }
-            lan.wait_for_candidates(deadline - now).await;
+            if now.duration_since(last_note) >= std::time::Duration::from_secs(5) {
+                last_note = now;
+                progress.say(
+                    "lan",
+                    format!("still looking... {}s left", (deadline - now).as_secs()),
+                );
+            }
+            lan.wait_for_candidates((deadline - now).min(std::time::Duration::from_secs(1)))
+                .await;
             let fresh = dial::dedupe(dial::unpinned(lan.candidates(repo)), net.node_id);
             dialer.dial_all(net, repo, fresh, MAX_SESSIONS).await;
         }
@@ -163,10 +207,17 @@ pub async fn sync_repo(
         } else if dialer.failures.no_shared {
             NetError::NoSharedRepo
         } else {
-            NetError::NoPeers
+            NetError::NoPeersTried(no_peers_detail(&dialer.failures, dht_found, lan.is_some()))
         });
     }
 
+    progress.say(
+        "heads",
+        format!(
+            "connected to {} peer(s); reading the repo state",
+            dialer.connected.len()
+        ),
+    );
     let (mut accepted, mut rejected) =
         fetch::fetch_heads(repo, &mut net_state, &mut dialer.connected).await;
     if net_state.signers.is_empty() {
@@ -221,6 +272,7 @@ pub async fn sync_repo(
     let resolved = store.resolve(&net_state);
     let haves = existing_haves(&store, &resolved).await;
     let missing_now = || missing(&store, &store.resolve(&net_state));
+    progress.say("pack", "downloading objects");
     fetch::fetch_missing(
         &store,
         repo,
@@ -228,8 +280,10 @@ pub async fn sync_repo(
         missing_now,
         haves,
         net.max_pack_bytes,
+        progress,
     )
     .await?;
+    progress.say("done", "download complete");
 
     // Manifests are stored only once their objects are: a node never
     // advertises heads it cannot serve (a fetch that fails is retried by
@@ -267,6 +321,23 @@ pub async fn sync_repo(
             peers: dialer.connected.len(),
         },
     ))
+}
+
+/// The text of the error when no peer could be reached.
+fn no_peers_detail(failures: &dial::Failures, dht_found: usize, lan: bool) -> String {
+    let mut text = format!("could not reach any peer ({}", failures.summary());
+    if lan {
+        text.push_str("; nobody answered on the local network");
+    }
+    text.push_str(&format!("; the DHT returned {dht_found})."));
+    if failures.timed_out > 0 || failures.unreachable > 0 {
+        text.push_str(
+            " The peer may be offline, or behind NAT or mobile data and not reachable from \
+             here. Put both machines on the same network or VPN, or have the seed forward \
+             a port.",
+        );
+    }
+    text
 }
 
 /// Extra rounds of DHT lookups while the head pointer is ahead.

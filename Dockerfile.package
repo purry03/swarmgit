@@ -1,8 +1,13 @@
 # syntax=docker/dockerfile:1
 #
-# Packaging image for scripts/package.sh: builds the release `swarm` binary and
-# wraps it in .deb and .rpm packages. Kept separate from Dockerfile.dev so the
-# e2e tooling (tcpdump, iptables, python) is not pulled into a packaging run.
+# Packaging image for scripts/package.sh: cross-compiles the release `swarm`
+# binary for Linux and macOS (x86_64 and aarch64) and wraps it in .deb, .rpm
+# and .tar.gz packages. Kept separate from Dockerfile.dev so the e2e tooling
+# (tcpdump, iptables, python) is not pulled into a packaging run.
+#
+# Cross-compiling goes through cargo-zigbuild: `zig cc` is the C compiler and
+# linker for every target, so no per-arch gcc toolchain or macOS SDK is needed
+# and Linux binaries can be linked against an old glibc (see package.sh).
 #
 # Build from the repository root; scripts/package.sh does this for you:
 #   docker build -f Dockerfile.package -t swarmgit-package .
@@ -13,20 +18,38 @@ FROM rust:1-slim-bookworm
 # dist/) stay owned by the host rather than root.
 ARG USER_ID=1000
 ARG GROUP_ID=1000
+ARG ZIG_VERSION=0.13.0
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_TERM_COLOR=always
 
-# Rust build toolchain plus the two package builders. `rpm` on Debian provides
+# Rust build toolchain plus the package builders. `rpm` on Debian provides
 # rpmbuild; dpkg-deb is part of the base dpkg package.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential pkg-config cmake clang libclang-dev llvm lld \
-      git ca-certificates dpkg-dev rpm file \
+      git ca-certificates curl xz-utils dpkg-dev rpm file \
  && rm -rf /var/lib/apt/lists/*
 
+# Zig, used only as a cross C compiler/linker. Pick the tarball for the
+# architecture the image itself is built on.
+RUN arch="$(uname -m)" \
+ && curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${arch}-${ZIG_VERSION}.tar.xz" \
+    | tar -xJ -C /opt \
+ && ln -s "/opt/zig-linux-${arch}-${ZIG_VERSION}/zig" /usr/local/bin/zig
+
 # rust-toolchain.toml asks for these; bake them in so a packaging run does not
-# hit the network for components.
-RUN rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+# hit the network for components or targets.
+RUN rustup toolchain install stable --profile minimal --component rustfmt --component clippy \
+ && cargo install --locked cargo-zigbuild
+
+# Targets go on the `stable` toolchain that rust-toolchain.toml selects, which
+# is not necessarily the image's default toolchain.
+RUN rustup target add --toolchain stable \
+      x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+      x86_64-apple-darwin aarch64-apple-darwin
 
 RUN if [ "$USER_ID" -ne 0 ]; then \
         groupadd --gid "$GROUP_ID" builder \
@@ -34,10 +57,6 @@ RUN if [ "$USER_ID" -ne 0 ]; then \
     fi \
  && mkdir -p /usr/local/cargo/registry /usr/local/cargo/git \
  && chown -R "$USER_ID:$GROUP_ID" /usr/local/cargo /usr/local/rustup
-
-ENV CARGO_HOME=/usr/local/cargo \
-    RUSTUP_HOME=/usr/local/rustup \
-    CARGO_TERM_COLOR=always
 
 USER ${USER_ID}:${GROUP_ID}
 WORKDIR /workspace
