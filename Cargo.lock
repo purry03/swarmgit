@@ -2103,6 +2103,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "swarm-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "swarm-core",
+ "swarm-net",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "swarm-store"
 version = "0.1.0"
 dependencies = [

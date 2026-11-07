@@ -7,7 +7,8 @@ use blake3::Hasher;
 use thiserror::Error;
 
 use crate::consts::{
-    CTX_INTEREST, CTX_KEYID, CTX_LAN, CTX_NODEAUTH, CTX_SESSION, CTX_SIG_MANIFEST, CTX_TOPIC,
+    CTX_INTEREST, CTX_KEYID, CTX_LAN, CTX_NODEAUTH, CTX_RELAY, CTX_SESSION, CTX_SIG_MANIFEST,
+    CTX_TOPIC,
 };
 use crate::ids::{KeyId, NodeId, RepoId};
 
@@ -182,6 +183,19 @@ pub fn auth_input(
     out.extend_from_slice(r_i);
     out.extend_from_slice(r_r);
     out.push(role);
+    out
+}
+
+/// Input signed by a relay listener to prove it holds the node key.
+///
+/// `name` is the relay address the listener dialed. Binding it stops a
+/// malicious relay from replaying the challenge of another relay.
+#[must_use]
+pub fn relay_auth_input(nonce: &[u8; 32], name: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(CTX_RELAY.len() + 32 + name.len());
+    out.extend_from_slice(CTX_RELAY);
+    out.extend_from_slice(nonce);
+    out.extend_from_slice(name.as_bytes());
     out
 }
 

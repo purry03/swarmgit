@@ -3,6 +3,7 @@ members = [
     "crates/swarm-core",
     "crates/swarm-store",
     "crates/swarm-net",
+    "crates/swarm-relay",
     "crates/swarm-disc",
     "crates/swarm-daemon",
     "crates/swarm-cli",

@@ -23,6 +23,9 @@ pub const CTX_SESSION: &str = "swarmgit/v1/session";
 /// Domain separator for the connection transcript signature.
 pub const CTX_NODEAUTH: &[u8] = b"swarmgit/v1/nodeauth";
 
+/// Domain separator for the relay listener proof (relay design spec REL-1).
+pub const CTX_RELAY: &[u8] = b"swarmgit/v1/relayauth";
+
 /// BEP 44 salt prefix for the DHT head pointer.
 pub const SALT_HEAD: &[u8] = b"swarmgit/v1/head";
 

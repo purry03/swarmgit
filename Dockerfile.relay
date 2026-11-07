@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+#
+# Runtime image for the relay acceptance test in compose.relay.yaml.
+# It holds the relay server and the tiny test peer, nothing else.
+
+FROM rust:1-slim-bookworm AS build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential pkg-config cmake clang libclang-dev llvm lld \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+RUN cargo build --locked -p swarm-relay
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends netcat-openbsd iproute2 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /src/target/debug/swarm-relay /usr/local/bin/swarm-relay
+COPY --from=build /src/target/debug/swarm-relay-peer /usr/local/bin/swarm-relay-peer
+RUN mkdir -p /state
+WORKDIR /state
+
+CMD ["sleep", "infinity"]

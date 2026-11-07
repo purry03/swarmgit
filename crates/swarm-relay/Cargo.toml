@@ -1,0 +1,32 @@
+[package]
+name = "swarm-relay"
+description = "Swarmgit relay: lets peers that cannot accept inbound connections reach each other."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "swarm-relay"
+path = "src/main.rs"
+
+[[bin]]
+name = "swarm-relay-peer"
+path = "src/bin/peer.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+swarm-core = { path = "../swarm-core" }
+swarm-net = { path = "../swarm-net" }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

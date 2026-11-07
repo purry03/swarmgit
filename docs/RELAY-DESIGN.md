@@ -36,7 +36,7 @@ This works because `swarm-net::handshake::{connect, accept}` are already generic
 
 ## 4. Relay protocol (new crate `swarm-relay`, wire in `swarm-net`)
 
-Relay framing before the splice: `u32` big-endian length plus one CBOR array, first element the type, 4 KiB maximum. After `Ready`, the connection is raw bytes in both directions with no relay framing.
+Relay framing before the splice: `u32` big-endian length plus one CBOR array, first element the type, 8 KiB maximum. After `Ready`, the connection is raw bytes in both directions with no relay framing.
 
 Default relay port: TCP 42425.
 
@@ -45,7 +45,7 @@ Default relay port: TCP 42425.
 | 0 | `RHello` | `version` (1), `role` (1 listen, 2 connect, 3 accept, 4 info) | client | none |
 | 1 | `RError` | `code` (tstr), `msg` (tstr) | relay | none, then close |
 | 2 | `Challenge` | `nonce` (bstr 32) | relay | `Prove` |
-| 3 | `Prove` | `bundle` (bstr 1984), `sig` (bstr 3373) | listener | `Listening` |
+| 3 | `Prove` | `bundle` (bstr 1984), `sig` (bstr 3373), `name` (tstr, the relay address the listener dialed) | listener | `Listening` |
 | 4 | `Listening` | `ttl_secs`, `observed` (bstr, listener's address as the relay sees it) | relay | none |
 | 5 | `Incoming` | `token` (bstr 16) | relay to listener | listener opens an accept connection |
 | 6 | `Connect` | `target` (bstr 32, node ID) | dialer | `Ready` or `RError` |
@@ -60,10 +60,10 @@ Default relay port: TCP 42425.
 | 15 | `Where` | `target` (bstr 32) | any client, role 4 | `Referral` |
 | 16 | `Referral` | `found` (bool: registered here), `closer` (array of relay addresses, at most 8) | relay | none |
 
-Error codes: `no_such_node`, `busy`, `limit_exceeded`, `bad_token`, `auth_failed`, `unsupported_version`.
+Error codes: `no_such_node`, `busy`, `timeout` (the listener did not accept in time), `limit_exceeded`, `bad_token`, `auth_failed`, `malformed`, `unsupported_version`.
 
 Rules
-- REL-1. Listen. After `RHello role=1` the relay sends `Challenge`. The listener signs `relay_auth_input(nonce, relay_addr)` with its node key, using the same hybrid suite 1 signature as `PqAuth`, and sends `Prove`. The relay checks `key_id(bundle)` and both signature halves. The node ID is `key_id(bundle)`. This stops anyone from claiming another node's mailbox. Domain string `CTX_RELAY = "swarmgit/v1 relay auth"` joins the table in 4.2 of the main spec.
+- REL-1. Listen. After `RHello role=1` the relay sends `Challenge`. The listener signs `relay_auth_input(nonce, name)`, where `name` is the `host:port` it dialed, with its node key, using the same hybrid suite 1 signature as `PqAuth`, and sends `Prove`. The relay checks that `name` is one of its configured names (`--name`), then `key_id(bundle)` and both signature halves. A malicious relay that forwards its challenge to another relay gets a signature over its own name, which the other relay rejects. The node ID is `key_id(bundle)`. This stops anyone from claiming another node's mailbox. Domain string `CTX_RELAY = b"swarmgit/v1/relayauth"` joins the table in 4.2 of the main spec.
 - REL-2. A node ID has at most one live control connection. A newer one replaces the older one, so reconnects after a network change work at once.
 - REL-3. Connect. The relay looks up `target`. If it is not listening, reply `RError no_such_node` and close. Otherwise create a pending pair with a random 16-byte token, send `Incoming(token)` to the listener, and hold the dialer's socket for at most 10 s.
 - REL-4. Accept. The listener opens a new TCP connection, sends `RHello role=3` and `Accept(token)`. The relay checks the token exists, was issued to this node, and has not expired, then sends `Ready` to both sockets and starts copying. A token is single use.
@@ -126,7 +126,7 @@ Relays are independent servers. There is no coordinator. Like BitTorrent tracker
 
 ## 7. Relay server
 
-- Binary: `swarm relay --listen 0.0.0.0:42425`. It lives in the `swarm` binary as a subcommand, with logic in the new crate `swarm-relay` so it is testable without the CLI. A systemd unit `swarmgit-relay.service` ships in the deb and rpm, disabled by default.
+- Binary: R1 ships `swarm-relay --listen 0.0.0.0:42425 --name relay.example:42425`, from the new crate `swarm-relay` (library plus binary, testable without the CLI). Folding it into the `swarm` binary as `swarm relay` happens in R4. A systemd unit `swarmgit-relay.service` ships in the deb and rpm, disabled by default.
 - REL-33. A relay also acts as a relay-network member: it runs the directory announce (REL-23), the self-check (REL-25), gossip (REL-26) and answers `Where` (REL-29). A relay with `--no-network` opts out and serves only direct listeners and dialers, which suits a private relay.
 - REL-19. Limits, all configurable with defaults: 10,000 listeners, 2 listeners per IP, 500 concurrent splices, 8 per IP, 20 `Connect` attempts per minute per IP, per-splice bandwidth 8 MiB/s, per-node 10 GiB per day. Exceeding any gives `RError limit_exceeded`.
 - REL-20. Pending state (tokens) expires in 10 s and is capped at 1,000 per relay.
@@ -151,7 +151,7 @@ Relays are independent servers. There is no coordinator. Like BitTorrent tracker
 
 ## 9. Milestones
 
-- R1. `swarm-relay` crate: protocol types, server (listen, connect, accept, splice), unit tests for each rule, and a client library `RelayClient::{listen, connect}` returning a stream. Acceptance: two test peers on isolated Docker networks clone through a relay container.
+- R1. `swarm-relay` crate: protocol types, server (listen, connect, accept, splice), unit tests for each rule, and a client library `RelayClient::{listen, connect}` returning a stream. Status: done. Delivered with `swarm-relay` (library, `swarm-relay` server binary, `swarm-relay-peer` test tool), 14 integration tests in `crates/swarm-relay/tests/relay.rs`, and `tests/e2e/relay.sh`. Acceptance: two test peers on isolated Docker networks (`compose.relay.yaml`) cannot reach each other directly, then complete the full swarm handshake with a pinned node ID and exchange a message through a relay container. A git clone through the relay needs the daemon integration in R2.
 - R2. Daemon integration with a configured relay: `relays` config, registration loop with backoff, `PeerAddr::Relay`, address kinds 8 and 9, dial fallback (REL-14), serve path, link hints (REL-8), `swarm status`, `no_peers` text. Acceptance: the `doc` scenario (both machines on separate networks) succeeds with a relay in the link.
 - R3. Relay network: `role=4` messages (`RInfo`, `RGetRelays`, `Where`), DHT directory announce and lookup (REL-23), probing and self-check (REL-24, REL-25), gossip (REL-26), saved relay set with ranking, HRW placement and node-ID-only dialing with referrals (REL-28, REL-29). Acceptance: three relays that know only the DHT (the Docker DHT test net) find each other; a client with no `relays` config and no link hint reaches a trapped node.
 - R4. Server hardening: limits, quotas, allowlist and password, `--no-network`, metrics, systemd unit, deb and rpm packaging, README and user guide section on running a relay.
