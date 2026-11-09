@@ -65,4 +65,40 @@ if peer peer-a swarm-relay-peer --key /state/a.key dial --relay relay:42425 --ta
     fail "dial to an unknown node succeeded"
 fi
 
+echo "== R2: git clone through the relay between isolated networks"
+# peer-b seeds a repo and registers with the relay; its tcp hint is useless
+# from peer-a, so the relay hint in the link is the only way in.
+peer peer-b bash -c '
+    set -e
+    mkdir -p /state/work/src && cd /state/work/src
+    git init -q -b main && swarm init >/dev/null
+    echo "hello through the relay" > file.txt
+    git add file.txt && git commit -q -m one && git push -q swarm main
+' || fail "peer-b could not create its repo"
+for _ in $(seq 50); do
+    LINK=$(peer peer-b bash -c 'cd /state/work/src && swarm link' 2>/dev/null) || true
+    [[ $LINK == *"h=relay:relay:42425@"* ]] && break
+    sleep 0.2
+done
+[[ $LINK == *"h=relay:relay:42425@"* ]] || fail "link has no relay hint: $LINK"
+echo "link: $LINK"
+peer peer-b swarm status 2>&1 | grep -q "relay relay:42425 registered" || fail "swarm status does not show the relay"
+
+CLONE_OUT=$(peer peer-a bash -c "cd /state/work && git clone '$LINK' out 2>&1") || fail "clone failed: $CLONE_OUT"
+echo "$CLONE_OUT" | tail -5
+[[ $(peer peer-a cat /state/work/out/file.txt) == "hello through the relay" ]] || fail "cloned content differs"
+peer peer-a git -C /state/work/out fsck --strict >/dev/null 2>&1 || fail "clone fsck failed"
+
+echo "== a link without the relay hint cannot reach peer-b, and says why"
+BARE=${LINK%%\?*}
+PEER_ERR=$(peer peer-a bash -c "cd /state/work && SWARM_HOME=/state/home-bare SWARM_LISTEN=0.0.0.0:42500 SWARM_FIND_TIMEOUT=5 git clone '$BARE' out2 2>&1" || true)
+echo "$PEER_ERR" | tail -3
+[[ $PEER_ERR == *"no_peers"* ]] || fail "expected no_peers for a link with no way in"
+[[ $PEER_ERR == *"SWARM_RELAYS"* ]] || fail "the error should suggest a relay"
+
+echo "== SWARM_RELAY_MODE=off ignores relay hints"
+OFF_ERR=$(peer peer-a bash -c "cd /state/work && SWARM_RELAY_MODE=off SWARM_FIND_TIMEOUT=5 SWARM_HOME=/state/home-off SWARM_LISTEN=0.0.0.0:42501 git clone '$LINK' out3 2>&1" || true)
+[[ $OFF_ERR != *"download complete"* ]] || fail "relay mode off should not use the relay: $OFF_ERR"
+[[ $OFF_ERR == *"no_peers"* || $OFF_ERR == *"auth_failed"* ]] || fail "unexpected result with relays off: $OFF_ERR"
+
 echo "PASS"

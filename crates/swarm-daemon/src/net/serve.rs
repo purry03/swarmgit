@@ -12,6 +12,7 @@ use swarm_core::manifest::verify_envelope;
 use swarm_net::handshake;
 use swarm_net::{Message, PeerAddr, Session, SessionHandle};
 use swarm_store::StoreError;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
@@ -102,24 +103,27 @@ pub async fn serve(net: Arc<NetState>, listener: TcpListener, shutdown: Arc<Noti
 }
 
 async fn handle_connection(net: Arc<NetState>, stream: TcpStream, peer: SocketAddr) {
+    handle_stream(net, stream, PeerAddr::Tcp(peer), &peer.to_string()).await;
+}
+
+/// Run the responder handshake on any stream and serve the session. Used for
+/// direct TCP connections and for streams a relay hands over.
+pub async fn handle_stream<S>(net: Arc<NetState>, stream: S, addr: PeerAddr, label: &str)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let repos = net.serving_repos();
-    let transport = match handshake::accept(
-        stream,
-        &net.node,
-        &repos,
-        PeerAddr::Tcp(peer),
-        HANDSHAKE_TIMEOUT,
-    )
-    .await
+    let transport = match handshake::accept(stream, &net.node, &repos, addr, HANDSHAKE_TIMEOUT)
+        .await
     {
         Ok(transport) => transport,
         Err(err) => {
-            tracing::debug!(peer = %peer, code = err.code(), error = %err, "inbound handshake rejected");
+            tracing::debug!(peer = %label, code = err.code(), error = %err, "inbound handshake rejected");
             return;
         }
     };
     let node = transport.info.node_id;
-    tracing::debug!(peer = %peer, node = %node.to_hex(), "inbound session ready");
+    tracing::debug!(peer = %label, node = %node.to_hex(), "inbound session ready");
 
     run_session(net, Session::start(transport)).await;
 }
@@ -411,12 +415,19 @@ fn serve_peers(net: &NetState, handle: &SessionHandle, rid: u64, repo_ix: u16) {
         };
         db.peers(repo).unwrap_or_default()
     };
-    let mut addresses = Vec::new();
+    // REL-9: a node registered with a relay offers its own relay address,
+    // first so the cap below never drops it.
+    let mut addresses: Vec<Vec<u8>> = net
+        .relay_peer_addrs()
+        .iter()
+        .map(|addr| addr.encode(None))
+        .collect();
     for row in rows {
         if let Ok(addr) = PeerAddr::parse_socket(&row.addr) {
             addresses.push(addr.encode(row.node_id.map(swarm_core::ids::NodeId::from_bytes)));
         }
     }
+    addresses.truncate(32);
     reply(handle, Message::Peers { rid, addresses });
 }
 

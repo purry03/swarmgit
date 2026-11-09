@@ -17,6 +17,7 @@ serde_json.workspace = true
 swarm-core = { path = "../swarm-core" }
 swarm-disc = { path = "../swarm-disc" }
 swarm-net = { path = "../swarm-net" }
+swarm-relay = { path = "../swarm-relay" }
 swarm-store = { path = "../swarm-store" }
 thiserror.workspace = true
 tokio.workspace = true

@@ -94,7 +94,21 @@ pub async fn status(state: &DaemonState, args: &Value) -> Result<Value, IpcError
         Some(Some(lan)) => json!({ "enabled": true, "port": lan.port() }),
         _ => json!({ "enabled": false }),
     };
-    Ok(json!({ "repos": repos, "lan": lan }))
+    let relays: Vec<Value> = state
+        .net()
+        .map(|net| net.relay_statuses())
+        .unwrap_or_default()
+        .iter()
+        .map(|relay| {
+            json!({
+                "relay": relay.name,
+                "registered": relay.registered,
+                "observed": relay.observed,
+                "error": relay.error,
+            })
+        })
+        .collect();
+    Ok(json!({ "repos": repos, "lan": lan, "relays": relays }))
 }
 
 /// Announce a newly served repo now on LAN (6.3) and the DHT (DHT-2),

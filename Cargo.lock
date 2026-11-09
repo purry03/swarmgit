@@ -2066,6 +2066,7 @@ dependencies = [
  "swarm-core",
  "swarm-disc",
  "swarm-net",
+ "swarm-relay",
  "swarm-store",
  "swarm-testpeer",
  "tempfile",

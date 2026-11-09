@@ -8,6 +8,7 @@ use swarm_core::ids::{NodeId, Oid, RepoId};
 use swarm_net::addr::PeerAddr;
 use swarm_net::handshake;
 use swarm_net::{Message, NetError, Session, SessionHandle};
+use swarm_relay::RelayError;
 use tokio::net::TcpStream;
 use tokio::task::JoinSet;
 
@@ -62,6 +63,8 @@ pub struct Failures {
     pub timed_out: usize,
     /// Dials the other side actively refused or that failed at the network.
     pub unreachable: usize,
+    /// Addresses dialed through a relay (included in `tried`).
+    pub relay_tried: usize,
 }
 
 impl Failures {
@@ -82,7 +85,16 @@ impl Failures {
         if other > 0 {
             parts.push(format!("{other} failed"));
         }
-        format!("tried {} address(es): {}", self.tried, parts.join(", "))
+        let via = if self.relay_tried > 0 {
+            format!(", {} of them through a relay", self.relay_tried)
+        } else {
+            String::new()
+        };
+        format!(
+            "tried {} address(es){via}: {}",
+            self.tried,
+            parts.join(", ")
+        )
     }
 }
 
@@ -144,10 +156,19 @@ impl Dialer {
         candidates: Vec<Candidate>,
         limit: usize,
     ) -> Vec<usize> {
+        let relays_off = crate::net::relay::mode() == crate::net::relay::Mode::Off;
         let mut queue: Vec<Candidate> = candidates
             .into_iter()
+            .filter(|candidate| !(relays_off && candidate.addr.is_relay()))
             .filter(|candidate| !self.tried.contains(&candidate.addr))
             .filter(|candidate| !self.has_node(candidate.node))
+            .collect();
+        // REL-14: a relay dial waits when a direct address for the same node
+        // is being tried too, so the direct path wins when it works.
+        let direct_nodes: Vec<NodeId> = queue
+            .iter()
+            .filter(|candidate| !candidate.addr.is_relay())
+            .filter_map(|candidate| candidate.node)
             .collect();
         queue.reverse();
         let mut added = Vec::new();
@@ -157,13 +178,22 @@ impl Dialer {
                 let Some(candidate) = queue.pop() else { break };
                 self.tried.push(candidate.addr.clone());
                 self.failures.tried += 1;
+                if candidate.addr.is_relay() {
+                    self.failures.relay_tried += 1;
+                }
+                let wait = match (&candidate.addr, candidate.node) {
+                    (PeerAddr::Relay { node, .. }, _) if direct_nodes.contains(node) => {
+                        crate::net::relay::dial_delay()
+                    }
+                    _ => Duration::ZERO,
+                };
                 self.progress
                     .detail("dial", format!("trying {}", candidate.addr));
                 self.progress
                     .dials(self.ok, self.failed, set.len() + 1, queue.len());
                 let net = Arc::clone(net);
                 set.spawn(async move {
-                    let result = dial(&net, repo, &candidate).await;
+                    let result = dial(&net, repo, &candidate, wait).await;
                     (candidate.addr, result)
                 });
             }
@@ -209,24 +239,63 @@ impl Dialer {
     }
 }
 
+fn relay_error(err: RelayError) -> NetError {
+    match err {
+        RelayError::Timeout(what) => NetError::Timeout(format!("relay: {what}")),
+        RelayError::Io(io) => NetError::Io(io),
+        other => NetError::Relay(other.to_string()),
+    }
+}
+
 async fn dial(
     net: &Arc<NetState>,
     repo: RepoId,
     candidate: &Candidate,
+    wait: Duration,
 ) -> Result<SessionHandle, NetError> {
-    let socket: SocketAddr = candidate.addr.socket();
-    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(socket))
-        .await
-        .map_err(|_| NetError::Timeout("connect timed out".into()))??;
-    let transport = handshake::connect(
-        stream,
-        &net.node,
-        std::slice::from_ref(&repo),
-        candidate.node,
-        candidate.addr.clone(),
-        HANDSHAKE_TIMEOUT,
-    )
-    .await?;
+    let transport = if let PeerAddr::Relay { relay, node } = &candidate.addr {
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+            // The direct address won while this dial waited.
+            if let Some(handle) = net
+                .sessions_for(repo)
+                .into_iter()
+                .find(|handle| handle.info().node_id == *node)
+            {
+                return Ok(handle);
+            }
+        }
+        let stream = swarm_relay::connect(&relay.to_string(), *node)
+            .await
+            .map_err(relay_error)?;
+        // The relay's address says nothing about how the peer sees us, so the
+        // handshake gets a neutral address (observed-address voting ignores
+        // an unspecified IP).
+        let neutral = PeerAddr::Tcp(SocketAddr::from(([0, 0, 0, 0], 0)));
+        handshake::connect(
+            stream,
+            &net.node,
+            std::slice::from_ref(&repo),
+            Some(*node),
+            neutral,
+            HANDSHAKE_TIMEOUT,
+        )
+        .await?
+    } else {
+        let socket: SocketAddr = candidate.addr.socket();
+        let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(socket))
+            .await
+            .map_err(|_| NetError::Timeout("connect timed out".into()))??;
+        handshake::connect(
+            stream,
+            &net.node,
+            std::slice::from_ref(&repo),
+            candidate.node,
+            candidate.addr.clone(),
+            HANDSHAKE_TIMEOUT,
+        )
+        .await?
+    };
     let node = transport.info.node_id;
     net.peer_ok(repo, &candidate.addr, node);
     Ok(crate::net::serve::spawn_session(

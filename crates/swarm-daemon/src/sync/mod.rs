@@ -207,7 +207,12 @@ pub async fn sync_repo(
         } else if dialer.failures.no_shared {
             NetError::NoSharedRepo
         } else {
-            NetError::NoPeersTried(no_peers_detail(&dialer.failures, dht_found, lan.is_some()))
+            NetError::NoPeersTried(no_peers_detail(
+                &dialer.failures,
+                dht_found,
+                lan.is_some(),
+                !crate::net::relay::configured().is_empty(),
+            ))
         });
     }
 
@@ -324,7 +329,12 @@ pub async fn sync_repo(
 }
 
 /// The text of the error when no peer could be reached.
-fn no_peers_detail(failures: &dial::Failures, dht_found: usize, lan: bool) -> String {
+fn no_peers_detail(
+    failures: &dial::Failures,
+    dht_found: usize,
+    lan: bool,
+    relays_configured: bool,
+) -> String {
     let mut text = format!("could not reach any peer ({}", failures.summary());
     if lan {
         text.push_str("; nobody answered on the local network");
@@ -335,6 +345,17 @@ fn no_peers_detail(failures: &dial::Failures, dht_found: usize, lan: bool) -> St
             " The peer may be offline, or behind NAT or mobile data and not reachable from \
              here. Put both machines on the same network or VPN, or have the seed forward \
              a port.",
+        );
+    }
+    let relays_off = crate::net::relay::mode() == crate::net::relay::Mode::Off;
+    if (failures.tried == 0 || failures.timed_out > 0 || failures.unreachable > 0)
+        && failures.relay_tried == 0
+        && !relays_configured
+        && !relays_off
+    {
+        text.push_str(
+            " Or run a relay (swarm-relay) and set SWARM_RELAYS=host:port on both \
+             machines so they can reach each other through it.",
         );
     }
     text

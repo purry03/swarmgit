@@ -286,7 +286,14 @@ async fn link(repo: Option<String>, json_output: bool) -> i32 {
         .and_then(|value| swarm_core::ids::NodeId::from_base32(value).ok());
     let link = match (listen, node) {
         (Some(listen), Some(node)) if port != 0 => {
-            swarm_daemon::net::link_with_hint(repo, listen, node, None).to_string()
+            // REL-8: relay hints come from the daemon, which knows its registrations.
+            let mut link = swarm_daemon::net::link_with_hint(repo, listen, node, None).to_string();
+            let relays = hello.get("relay_hints").and_then(Value::as_array);
+            for hint in relays.into_iter().flatten().filter_map(Value::as_str) {
+                link.push('&');
+                link.push_str(hint);
+            }
+            link
         }
         _ => format!("swarm://{}", repo.to_base32()),
     };
@@ -459,6 +466,26 @@ async fn status(json_output: bool, repo: Option<String>) -> i32 {
                         item.get("seq").and_then(Value::as_u64).unwrap_or(0),
                     );
                 }
+            }
+        }
+    }
+    if let Some(relays) = result.get("relays").and_then(Value::as_array) {
+        for relay in relays {
+            let name = relay.get("relay").and_then(Value::as_str).unwrap_or("?");
+            if relay
+                .get("registered")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                eprintln!("relay {name} registered");
+            } else {
+                eprintln!(
+                    "relay {name} not registered: {}",
+                    relay
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("connecting"),
+                );
             }
         }
     }

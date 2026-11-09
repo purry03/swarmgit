@@ -50,6 +50,10 @@ async fn dispatch(
             "port": state.net().map(|net| net.listen.port()).unwrap_or(0),
             "listen": state.net().map(|net| net.listen.to_string()).unwrap_or_default(),
             "node_id": state.net().map(|net| net.node_id.to_base32()).unwrap_or_default(),
+            "relay_hints": state
+                .net()
+                .map(|net| net.relay_hints().iter().map(ToString::to_string).collect::<Vec<_>>())
+                .unwrap_or_default(),
         })),
         "init_repo" => repo::init_repo(state, args).await,
         "sync" => repo::sync(state, args, progress).await,

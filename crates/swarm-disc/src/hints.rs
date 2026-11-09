@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use swarm_core::ids::{Hint, Host, NodeId};
+use swarm_core::ids::{Hint, HintScheme, Host, NodeId};
 use swarm_net::PeerAddr;
 use thiserror::Error;
 use tokio::net::lookup_host;
@@ -48,11 +48,23 @@ pub async fn resolve_hints(hints: &[String]) -> Vec<Candidate> {
             },
         };
         for addr in addresses {
-            out.push(Candidate {
-                addr: PeerAddr::Tcp(addr),
-                node: hint.node,
-                source: raw.clone(),
-            });
+            let candidate = if hint.scheme == HintScheme::Relay {
+                // A relay hint names the node behind the relay, so without
+                // the pin there is nothing to ask the relay for.
+                let Some(node) = hint.node else { continue };
+                Candidate {
+                    addr: PeerAddr::Relay { relay: addr, node },
+                    node: Some(node),
+                    source: raw.clone(),
+                }
+            } else {
+                Candidate {
+                    addr: PeerAddr::Tcp(addr),
+                    node: hint.node,
+                    source: raw.clone(),
+                }
+            };
+            out.push(candidate);
         }
     }
     out
@@ -73,6 +85,25 @@ mod tests {
             candidates[0].addr.socket(),
             "127.0.0.1:42501".parse().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn relay_hints_need_a_node_and_become_relay_addresses() {
+        let node = NodeId::from_bytes([6u8; 32]);
+        let raw = format!("relay:127.0.0.1:42425@{}", node.to_base32());
+        let candidates = resolve_hints(&[raw]).await;
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].addr,
+            PeerAddr::Relay {
+                relay: "127.0.0.1:42425".parse().unwrap(),
+                node
+            }
+        );
+        assert_eq!(candidates[0].node, Some(node));
+        assert!(resolve_hints(&["relay:127.0.0.1:42425".to_string()])
+            .await
+            .is_empty());
     }
 
     #[tokio::test]

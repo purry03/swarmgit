@@ -285,6 +285,7 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
     }
     net::dht::start(&net).await;
     net::upnp::start(&net);
+    net::relay::start(&net);
 
     let socket = home.socket_path();
     if socket.exists() {

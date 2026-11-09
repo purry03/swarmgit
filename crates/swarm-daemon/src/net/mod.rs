@@ -2,6 +2,7 @@
 //! and the DHT route, observed addresses and port mapping (M4, M5).
 
 pub mod dht;
+pub mod relay;
 pub mod serve;
 pub mod upnp;
 
@@ -53,6 +54,7 @@ pub struct NetState {
     dht: OnceLock<swarm_disc::dht::MainlineDht>,
     observed: Mutex<HashMap<IpAddr, HashSet<[u8; 32]>>>,
     external: Mutex<Option<IpAddr>>,
+    relays: Mutex<Vec<relay::RelayStatus>>,
 }
 
 impl NetState {
@@ -80,6 +82,7 @@ impl NetState {
             dht: OnceLock::new(),
             observed: Mutex::new(HashMap::new()),
             external: Mutex::new(None),
+            relays: Mutex::new(Vec::new()),
         }))
     }
 
@@ -149,7 +152,10 @@ impl NetState {
             }),
             _ => None,
         };
-        link_with_hint(repo, self.listen, self.node_id, host.as_deref())
+        let mut link = link_with_hint(repo, self.listen, self.node_id, host.as_deref());
+        // REL-8: a node reached through a relay says so in its link.
+        link.hints.extend(self.relay_hints());
+        link
     }
 
     /// Live sessions that carry `repo`, inbound or outbound.

@@ -18,6 +18,10 @@ pub enum PeerAddrKind {
     Ipv6 = 6,
     /// IPv6 followed by a 32-byte node ID.
     Ipv6Node = 7,
+    /// A node behind an IPv4 relay: relay IP, port, then the node ID.
+    RelayIpv4 = 8,
+    /// A node behind an IPv6 relay: relay IP, port, then the node ID.
+    RelayIpv6 = 9,
 }
 
 /// A peer reachable over TCP.
@@ -25,21 +29,55 @@ pub enum PeerAddrKind {
 pub enum PeerAddr {
     /// TCP address.
     Tcp(SocketAddr),
+    /// A node that cannot accept inbound connections, reached through a
+    /// relay (relay design spec 5.1). It always carries the node ID, so it is
+    /// always pinned.
+    Relay {
+        /// The relay's TCP address.
+        relay: SocketAddr,
+        /// The node behind the relay.
+        node: NodeId,
+    },
 }
 
 impl PeerAddr {
     /// Socket address.
     #[must_use]
+    ///
+    /// For a relay address this is the relay's own address.
     pub fn socket(&self) -> SocketAddr {
         match self {
             Self::Tcp(addr) => *addr,
+            Self::Relay { relay, .. } => *relay,
         }
+    }
+
+    /// True for an address reached through a relay.
+    #[must_use]
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay { .. })
     }
 
     /// Encode for the `Peers` message. `node` adds kinds 5 and 7.
     #[must_use]
     pub fn encode(&self, node: Option<NodeId>) -> Vec<u8> {
         match self {
+            Self::Relay { relay, node } => {
+                let mut out = Vec::with_capacity(51);
+                match relay.ip() {
+                    IpAddr::V4(ip) => {
+                        out.push(PeerAddrKind::RelayIpv4 as u8);
+                        out.extend_from_slice(&ip.octets());
+                    }
+                    IpAddr::V6(ip) => {
+                        out.push(PeerAddrKind::RelayIpv6 as u8);
+                        out.extend_from_slice(&ip.octets());
+                    }
+                }
+                out.extend_from_slice(&relay.port().to_be_bytes());
+                out.extend_from_slice(node.as_bytes());
+                out
+            }
             Self::Tcp(addr) => {
                 let mut out = Vec::with_capacity(35);
                 let (kind, ip_bytes) = match addr.ip() {
@@ -85,14 +123,36 @@ impl PeerAddr {
                 let width = 16;
                 take_addr(rest, width, kind == 7)
             }
+            8 | 9 => {
+                let width = if kind == 8 { 4 } else { 16 };
+                let (addr, node) = take_addr(rest, width, true)?;
+                let node =
+                    node.ok_or_else(|| NetError::Malformed("relay address has no node ID".into()))?;
+                Ok((
+                    PeerAddr::Relay {
+                        relay: addr.socket(),
+                        node,
+                    },
+                    Some(node),
+                ))
+            }
             other => Err(NetError::Malformed(format!(
                 "unknown peer address kind {other}"
             ))),
         }
     }
 
-    /// Parse `host:port`, resolving nothing.
+    /// Parse `host:port` (resolving nothing), or the `relay:host:port@node`
+    /// form that [`fmt::Display`] writes for relay addresses.
     pub fn parse_socket(value: &str) -> Result<Self, NetError> {
+        if let Some(rest) = value.strip_prefix("relay:") {
+            let bad = || NetError::Malformed(format!("bad address {value}"));
+            let (relay, node) = rest.rsplit_once('@').ok_or_else(bad)?;
+            return Ok(Self::Relay {
+                relay: relay.parse::<SocketAddr>().map_err(|_| bad())?,
+                node: NodeId::from_base32(node).map_err(|_| bad())?,
+            });
+        }
         value
             .parse::<SocketAddr>()
             .map(Self::Tcp)
@@ -138,6 +198,7 @@ impl fmt::Display for PeerAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tcp(addr) => write!(f, "{addr}"),
+            Self::Relay { relay, node } => write!(f, "relay:{relay}@{}", node.to_base32()),
         }
     }
 }
@@ -164,8 +225,30 @@ mod tests {
     }
 
     #[test]
+    fn relay_addresses_round_trip_and_always_carry_the_node() {
+        let node = NodeId::from_bytes([9u8; 32]);
+        for relay in ["203.0.113.5:42425", "[2001:db8::1]:42425"] {
+            let addr = PeerAddr::Relay {
+                relay: relay.parse().unwrap(),
+                node,
+            };
+            // The node argument is ignored: the node is part of the address.
+            let bytes = addr.encode(None);
+            assert_eq!(
+                PeerAddr::decode(&bytes).unwrap(),
+                (addr.clone(), Some(node))
+            );
+            assert_eq!(PeerAddr::parse_socket(&addr.to_string()).unwrap(), addr);
+            assert!(addr.is_relay());
+        }
+        // Kind 8 without the node bytes is malformed.
+        assert!(PeerAddr::decode(&[8, 1, 2, 3, 4, 0, 1]).is_err());
+        assert!(PeerAddr::parse_socket("relay:1.2.3.4:5").is_err());
+    }
+
+    #[test]
     fn rejects_bad_kinds_and_lengths() {
-        assert!(PeerAddr::decode(&[9, 0, 0]).is_err());
+        assert!(PeerAddr::decode(&[10, 0, 0]).is_err());
         assert!(PeerAddr::decode(&[4, 1, 2, 3]).is_err());
     }
 }

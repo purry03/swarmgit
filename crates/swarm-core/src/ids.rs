@@ -127,6 +127,12 @@ macro_rules! id_type {
             }
         }
 
+        impl std::hash::Hash for $name {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.0.hash(state);
+            }
+        }
+
         impl PartialEq for $name {
             fn eq(&self, other: &Self) -> bool {
                 self.0.as_slice().ct_eq(other.0.as_slice()).into()
@@ -232,6 +238,9 @@ pub enum HintScheme {
     Tcp,
     /// A Tor onion service reached through a SOCKS5 proxy (M9).
     Onion,
+    /// A node reached through a relay. The host and port are the relay's and
+    /// the pin after `@` is the node behind it, so the pin is required.
+    Relay,
 }
 
 impl HintScheme {
@@ -239,6 +248,7 @@ impl HintScheme {
         match input {
             "tcp" => Some(Self::Tcp),
             "onion" => Some(Self::Onion),
+            "relay" => Some(Self::Relay),
             _ => None,
         }
     }
@@ -247,6 +257,7 @@ impl HintScheme {
         match self {
             Self::Tcp => "tcp",
             Self::Onion => "onion",
+            Self::Relay => "relay",
         }
     }
 }
@@ -273,7 +284,9 @@ impl fmt::Display for Host {
 }
 
 impl Host {
-    fn parse(input: &str) -> Option<Self> {
+    /// Parse a hint host: bracketed IPv6, dotted-quad IPv4, or a DNS name.
+    #[must_use]
+    pub fn parse(input: &str) -> Option<Self> {
         if let Some(inner) = input.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             return inner.parse::<Ipv6Addr>().ok().map(Self::Ipv6);
         }
