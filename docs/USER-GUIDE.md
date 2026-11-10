@@ -235,6 +235,7 @@ repo:
 | Route | Source | Notes |
 | --- | --- | --- |
 | Hints | `h=tcp:host:port[@node]` in the link | Pinned when `@node` is present. |
+| Relay | `h=relay:host:port@node` in the link, or a relay address from peer exchange | For peers that cannot accept inbound connections. See "Relays" below. |
 | Known peers | the `peers` table in `swarm.db` | Filled by earlier syncs, best first; keeps trust-on-first-use pins. |
 | LAN | UDP multicast on port 42099 | Same network segment only. |
 | DHT | Mainline DHT lookup | Works with no hint at all; needs outbound UDP. |
@@ -262,6 +263,32 @@ listen port (one-hour lease, renewed every 30 minutes). Without UPnP, set
 outbound dials. A node takes an external IP as its own only after two
 different peers report it.
 
+**Relays.** A node behind NAT, CGNAT or mobile data cannot be dialed, and two
+such nodes cannot reach each other at all. A relay is a small public server
+that both sides connect out to; it joins the two connections and copies bytes.
+The swarm handshake still runs end to end through it, so the relay sees only
+ciphertext, and the dialer checks the node ID it asked for: a malicious relay
+can only break the connection, not impersonate a peer.
+
+*Run a relay* on any machine with a reachable TCP port (default 42425):
+
+```bash
+swarm-relay --listen 0.0.0.0:42425 --name relay.example.org:42425
+```
+
+`--name` is the exact `host:port` clients use to reach it (repeat it for
+several names). Limits: `--max-listeners`, `--max-splices`, `--idle-secs`.
+
+*Use a relay* by setting `SWARM_RELAYS=relay.example.org:42425` on the
+machine that cannot be reached (the seeder), and on the cloning machine if it
+also needs it. The seeder registers with the relay and then adds
+`h=relay:relay.example.org:42425@<node>` to its `swarm link` output and to
+the link printed by `swarm init`. Anyone cloning with that link reaches it
+through the relay when the direct address does not work. `swarm status` shows
+`relay <name> registered` or the error while it is not. When a direct address
+for the same node is also being tried, the relay dial waits 1.5 seconds so a
+working direct path wins. A relay only splices to a node ID the dialer names.
+
 **Storage.** `swarm gc <repo>` repacks a repo's object store. It keeps every
 object reachable from a stored manifest, and fails with `busy` while a sync or
 upload of that repo is running; run it again a moment later.
@@ -280,6 +307,9 @@ upload of that repo is running; run it again a moment later.
 | `SWARM_DHT_BOOTSTRAP` | Comma-separated `host:port` list that replaces the built-in DHT bootstrap nodes (tests point it at a local testnet). |
 | `SWARM_DHT_BIND` | IP the DHT UDP socket binds to. |
 | `SWARM_DHT_PORT` | DHT UDP port; ephemeral by default. Known DHT nodes are kept in `swarm.db` and reused on the next start. |
+| `SWARM_RELAYS` | Comma-separated `host:port` relays to register with and to dial through (at most two are used). Empty by default. |
+| `SWARM_RELAY_MODE` | `auto` (default) and `always` register with the configured relays; `off` never registers and ignores relay hints. |
+| `SWARM_RELAY_DELAY_MS` | Delay before a relay dial when a direct address for the same node is also tried, default `1500`. |
 | `SWARM_NO_UPNP` | `1` skips the best-effort UPnP IGD port mapping of the listen port. |
 | `SWARM_MAX_PACK_BYTES` | Largest served or accepted pack, default 2 GiB. |
 | `SWARM_LOG` | Tracing filter for the daemon, default `info`. |
@@ -322,6 +352,15 @@ worktree with that repo.
 **`no_peers` / clone hangs** — check the hint host and port:
 `docker compose -f compose.peers.yaml exec peer-a ss -tlnp | grep 42424`.
 Inside the compose network use `a`/`b`, not `127.0.0.1`.
+
+**Two machines on different networks (home Wi-Fi and mobile data, CGNAT)
+cannot clone from each other** — neither can accept inbound connections, so
+use a relay (section 7): run `swarm-relay` on a public host, set
+`SWARM_RELAYS` on the seeding machine, and clone with the link that
+`swarm link` prints afterwards (it contains the `h=relay:` hint). Check
+`swarm status` says `relay ... registered`. A `no_peers` error that says
+"through a relay" means the relay was tried but the seeder is not registered
+with it or is offline.
 
 **A hintless `swarm://<repo>` link finds nothing** — off the local network the
 link relies on the Mainline DHT, which needs outbound UDP and a seeder that has
@@ -394,6 +433,9 @@ docker compose run --rm dev bash -c 'tests/e2e/m2.sh'
 docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/dht.sh'
 # M5: relay over the DHT, peer exchange, Announce, two seeders and gc.
 docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m5.sh'
+
+# R1 and R2: relay between isolated Docker networks, including a real clone.
+tests/e2e/relay.sh
 
 # Against the public Mainline DHT (needs internet access).
 docker compose run --rm -e SWARM_LIVE_DHT=1 dev bash -c \
