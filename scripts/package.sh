@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build release packages for the `swarm` binary: .deb, .rpm and generic .tar.gz
+# Build release packages for `swarm` and the `swarm-relay` server: .deb, .rpm and generic .tar.gz
 # for Linux (x86_64, aarch64), .tar.gz for macOS (x86_64, aarch64), plus a
 # SHA256SUMS file and an optional detached GPG signature over it.
 #
@@ -10,6 +10,10 @@
 #   scripts/package.sh --arch aarch64   # only ARM64 (repeatable)
 #   scripts/package.sh --sign           # also sign SHA256SUMS with gpg
 #   VERSION=0.2.0 scripts/package.sh    # override the Cargo.toml version
+#
+# Two packages come out of each .deb/.rpm build: `swarmgit` (the swarm CLI and
+# git remote helper) and `swarm-relay` (the relay server, with a systemd unit
+# and /etc/default/swarm-relay). The .tar.gz holds both binaries.
 #
 # Format flags (--deb --rpm --tar) and platform flags (--linux --macos) narrow
 # the build; a group with no flag means "all of it". .deb and .rpm exist for
@@ -56,7 +60,7 @@ SEL_FMT=0 SEL_OS=0
 OSES=() ARCHES=()
 
 usage() {
-    sed -n '2,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 add_arch() {
@@ -178,7 +182,7 @@ if [[ ${SWARM_PKG_INSIDE:-} == 1 ]]; then
     mkdir -p "$OUT_DIR"
 
     # Per-target context, set by build_target.
-    OS= ARCH= BIN= DEB_ARCH= RPM_ARCH=
+    OS= ARCH= BIN= RELAY_BIN= DEB_ARCH= RPM_ARCH=
 
     build_target() {
         OS=$1 ARCH=$2
@@ -189,23 +193,206 @@ if [[ ${SWARM_PKG_INSIDE:-} == 1 ]]; then
             # The ".2.17" suffix makes zig link against that glibc, not the
             # container's (2.36), so the binary runs on old distributions.
             echo "== cargo zigbuild --release ($triple, glibc $GLIBC, version $VERSION)"
-            cargo zigbuild --release --locked -p swarm-cli --target "$triple.$GLIBC"
+            cargo zigbuild --release --locked -p swarm-cli -p swarm-relay --target "$triple.$GLIBC"
             ;;
         macos)
             triple=$ARCH-apple-darwin
             echo "== cargo zigbuild --release ($triple, version $VERSION)"
-            cargo zigbuild --release --locked -p swarm-cli --target "$triple"
+            cargo zigbuild --release --locked -p swarm-cli -p swarm-relay --target "$triple"
             ;;
         esac
         BIN=$CARGO_TARGET_DIR/$triple/release/swarm
-        [[ -x $BIN ]] || {
-            echo "build produced no binary at $BIN" >&2
-            exit 1
-        }
+        RELAY_BIN=$CARGO_TARGET_DIR/$triple/release/swarm-relay
+        for bin in "$BIN" "$RELAY_BIN"; do
+            [[ -x $bin ]] || {
+                echo "build produced no binary at $bin" >&2
+                exit 1
+            }
+        done
         case $ARCH in
         x86_64) DEB_ARCH=amd64 RPM_ARCH=x86_64 ;;
         aarch64) DEB_ARCH=arm64 RPM_ARCH=aarch64 ;;
         esac
+    }
+
+    # Files shared by the relay's .deb and .rpm.
+    relay_unit() {
+        cat <<'EOF'
+[Unit]
+Description=Swarmgit relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=swarm-relay
+Group=swarm-relay
+EnvironmentFile=-/etc/default/swarm-relay
+ExecStart=/usr/bin/swarm-relay $SWARM_RELAY_ARGS
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    }
+
+    relay_defaults() {
+        cat <<'EOF'
+# Arguments for swarm-relay (see `swarm-relay --help`).
+#
+# --name is the exact host:port that clients put in SWARM_RELAYS. Set it to
+# this machine's public address or DNS name, then run:
+#   systemctl restart swarm-relay
+SWARM_RELAY_ARGS="--listen 0.0.0.0:42425"
+#SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --name relay.example.org:42425"
+EOF
+    }
+
+    package_relay_deb() {
+        local stage=$WORK/relay-deb-$ARCH/swarm-relay
+        mkdir -p "$stage/DEBIAN" "$stage/usr/bin" "$stage/lib/systemd/system" \
+            "$stage/etc/default" "$stage/usr/share/doc/swarm-relay"
+        install -m 0755 "$RELAY_BIN" "$stage/usr/bin/swarm-relay"
+        relay_unit >"$stage/lib/systemd/system/swarm-relay.service"
+        relay_defaults >"$stage/etc/default/swarm-relay"
+        chmod 0644 "$stage/lib/systemd/system/swarm-relay.service" "$stage/etc/default/swarm-relay"
+        [[ -f README.md ]] && install -m 0644 README.md "$stage/usr/share/doc/swarm-relay/README.md"
+        echo /etc/default/swarm-relay >"$stage/DEBIAN/conffiles"
+
+        local size
+        size=$(find "$stage" -type f -printf '%s\n' |
+            awk '{ total += $1 } END { print int((total + 1023) / 1024) }')
+        cat >"$stage/DEBIAN/control" <<EOF
+Package: swarm-relay
+Version: $VERSION
+Architecture: $DEB_ARCH
+Maintainer: $MAINTAINER
+Installed-Size: $size
+Section: net
+Priority: optional
+Recommends: systemd
+Description: relay server for swarmgit peers behind NAT
+ A swarm-relay joins two outbound connections so peers that cannot accept
+ inbound connections (NAT, mobile data) can still reach each other. The
+ swarm handshake runs end to end through it, so the relay sees only
+ ciphertext. Listens on TCP 42425 by default.
+EOF
+        cat >"$stage/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    if ! getent passwd swarm-relay >/dev/null; then
+        adduser --system --group --no-create-home --home /nonexistent \
+            --shell /usr/sbin/nologin swarm-relay >/dev/null
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+        systemctl enable swarm-relay.service >/dev/null 2>&1 || true
+        systemctl restart swarm-relay.service || true
+    fi
+fi
+exit 0
+EOF
+        cat >"$stage/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl stop swarm-relay.service || true
+        systemctl disable swarm-relay.service >/dev/null 2>&1 || true
+    fi
+fi
+exit 0
+EOF
+        cat >"$stage/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+if [ "$1" = purge ] && getent passwd swarm-relay >/dev/null; then
+    deluser --system swarm-relay >/dev/null 2>&1 || true
+fi
+exit 0
+EOF
+        chmod 0755 "$stage/DEBIAN/postinst" "$stage/DEBIAN/prerm" "$stage/DEBIAN/postrm"
+
+        dpkg-deb --build --root-owner-group "$stage" \
+            "$OUT_DIR/swarm-relay_${VERSION}_${DEB_ARCH}.deb"
+    }
+
+    package_relay_rpm() {
+        local top=$WORK/relay-rpmbuild-$ARCH src=$WORK/relay-rpm-src-$ARCH spec=$WORK/relay-rpmbuild-$ARCH/SPECS/swarm-relay.spec
+        mkdir -p "$top"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} "$src"
+        install -m 0755 "$RELAY_BIN" "$src/swarm-relay"
+        relay_unit >"$src/swarm-relay.service"
+        relay_defaults >"$src/swarm-relay.default"
+
+        cat >"$spec" <<EOF
+%global debug_package %{nil}
+%global _build_id_links none
+%global __os_install_post %{nil}
+AutoReqProv: no
+
+Name:           swarm-relay
+Version:        $RPM_VERSION
+Release:        $RELEASE
+Summary:        Relay server for swarmgit peers behind NAT
+License:        MIT OR Apache-2.0
+Requires(pre):  shadow-utils
+
+%description
+A swarm-relay joins two outbound connections so peers that cannot accept
+inbound connections (NAT, mobile data) can still reach each other. The swarm
+handshake runs end to end through it. Listens on TCP 42425 by default.
+
+%install
+install -Dpm 0755 $src/swarm-relay %{buildroot}%{_bindir}/swarm-relay
+install -Dpm 0644 $src/swarm-relay.service %{buildroot}/usr/lib/systemd/system/swarm-relay.service
+install -Dpm 0644 $src/swarm-relay.default %{buildroot}/etc/default/swarm-relay
+
+%pre
+getent passwd swarm-relay >/dev/null || useradd -r -M -d /nonexistent -s /sbin/nologin swarm-relay
+
+%post
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || :
+    systemctl enable swarm-relay.service >/dev/null 2>&1 || :
+    systemctl restart swarm-relay.service || :
+fi
+
+%preun
+if [ \$1 -eq 0 ] && [ -d /run/systemd/system ]; then
+    systemctl stop swarm-relay.service || :
+    systemctl disable swarm-relay.service >/dev/null 2>&1 || :
+fi
+
+%files
+%{_bindir}/swarm-relay
+/usr/lib/systemd/system/swarm-relay.service
+%config(noreplace) /etc/default/swarm-relay
+EOF
+        rpmbuild -bb --quiet --target "$RPM_ARCH-linux" --define "_topdir $top" "$spec"
+        local built
+        built=$(find "$top/RPMS" -type f -name '*.rpm' | head -n1)
+        [[ -n $built ]] || {
+            echo "rpmbuild produced no relay package" >&2
+            exit 1
+        }
+        install -m 0644 "$built" \
+            "$OUT_DIR/swarm-relay-${RPM_VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
     }
 
     package_deb() {
@@ -309,6 +496,7 @@ EOF
         mkdir -p "$stage/bin"
         install -m 0755 "$BIN" "$stage/bin/swarm"
         ln -sfn swarm "$stage/bin/git-remote-swarm"
+        install -m 0755 "$RELAY_BIN" "$stage/bin/swarm-relay"
         for doc in README.md CHANGELOG.md; do
             [[ -f $doc ]] && install -m 0644 "$doc" "$stage/$doc"
         done
@@ -321,8 +509,8 @@ EOF
     for target in $TARGETS; do
         build_target "${target%%:*}" "${target##*:}"
         if [[ $OS == linux ]]; then
-            if ((WANT_DEB)); then package_deb; fi
-            if ((WANT_RPM)); then package_rpm; fi
+            if ((WANT_DEB)); then package_deb && package_relay_deb; fi
+            if ((WANT_RPM)); then package_rpm && package_relay_rpm; fi
         fi
         if ((WANT_TAR)); then package_tar; fi
     done
@@ -395,7 +583,9 @@ docker run --rm -i \
     shopt -s nullglob
     files=(
         "swarmgit_${VERSION}_"*.deb
+        "swarm-relay_${VERSION}_"*.deb
         "swarmgit-${RPM_VERSION}-${RELEASE}."*.rpm
+        "swarm-relay-${RPM_VERSION}-${RELEASE}."*.rpm
         "swarmgit-${VERSION}-"{linux,macos}-*.tar.gz
     )
     ((${#files[@]})) || exit 0
