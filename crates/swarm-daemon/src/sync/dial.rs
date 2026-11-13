@@ -163,6 +163,42 @@ impl Dialer {
             .filter(|candidate| !self.tried.contains(&candidate.addr))
             .filter(|candidate| !self.has_node(candidate.node))
             .collect();
+        // A peer whose node ID is known (a pinned hint, a remembered peer, peer
+        // exchange) may be registered with a relay we use too. Try it there as
+        // well, without needing a relay hint in the link.
+        if !relays_off {
+            let relays: Vec<std::net::SocketAddr> = net
+                .relay_statuses()
+                .iter()
+                .filter(|status| status.registered)
+                .filter_map(|status| status.addr)
+                .collect();
+            let mut extra = Vec::new();
+            for candidate in &queue {
+                let Some(node) = candidate.node else { continue };
+                if candidate.addr.is_relay() || node == net.node_id {
+                    continue;
+                }
+                for relay in &relays {
+                    let addr = PeerAddr::Relay {
+                        relay: *relay,
+                        node,
+                    };
+                    if !queue
+                        .iter()
+                        .chain(extra.iter())
+                        .any(|other: &Candidate| other.addr == addr)
+                        && !self.tried.contains(&addr)
+                    {
+                        extra.push(Candidate {
+                            addr,
+                            node: Some(node),
+                        });
+                    }
+                }
+            }
+            queue.extend(extra);
+        }
         // REL-14: a relay dial waits when a direct address for the same node
         // is being tried too, so the direct path wins when it works.
         let direct_nodes: Vec<NodeId> = queue

@@ -89,6 +89,12 @@ echo "$CLONE_OUT" | tail -5
 [[ $(peer peer-a cat /state/work/out/file.txt) == "hello through the relay" ]] || fail "cloned content differs"
 peer peer-a git -C /state/work/out fsck --strict >/dev/null 2>&1 || fail "clone fsck failed"
 
+echo "== a pinned peer is also tried through our own relay, without a relay hint in the link"
+NODE=${LINK##*@}
+PIN_LINK="${LINK%%\?*}?h=tcp:10.255.255.1:42424@$NODE"
+PIN_OUT=$(peer peer-a bash -c "cd /state/work && SWARM_RELAYS=relay:42425 SWARM_RELAY_DELAY_MS=200 SWARM_HOME=/state/home-pin SWARM_LISTEN=0.0.0.0:42502 git clone '$PIN_LINK' out4 2>&1") || fail "pinned clone through our own relay failed: $PIN_OUT"
+[[ $(peer peer-a cat /state/work/out4/file.txt) == "hello through the relay" ]] || fail "pinned clone content differs"
+
 echo "== a link without the relay hint cannot reach peer-b, and says why"
 BARE=${LINK%%\?*}
 PEER_ERR=$(peer peer-a bash -c "cd /state/work && SWARM_HOME=/state/home-bare SWARM_LISTEN=0.0.0.0:42500 SWARM_FIND_TIMEOUT=5 git clone '$BARE' out2 2>&1" || true)

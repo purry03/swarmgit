@@ -244,9 +244,22 @@ async fn init(object_format: Option<String>, json_output: bool) -> i32 {
             })
         );
     } else {
-        println!("{link}");
+        println!("{}", shell_safe(link));
     }
     0
+}
+
+/// A link with several hints contains `&`, which a shell treats as "run in the
+/// background" and silently cuts the link at the first one. When a person is
+/// reading the terminal, print it single-quoted so it can be pasted as is.
+/// Piped output stays bare so scripts keep working.
+fn shell_safe(link: &str) -> String {
+    use std::io::IsTerminal;
+    if link.contains('&') && std::io::stdout().is_terminal() {
+        format!("'{link}'")
+    } else {
+        link.to_string()
+    }
 }
 
 async fn link(repo: Option<String>, json_output: bool) -> i32 {
@@ -300,7 +313,7 @@ async fn link(repo: Option<String>, json_output: bool) -> i32 {
     if json_output {
         println!("{}", json!({ "link": link }));
     } else {
-        println!("{link}");
+        println!("{}", shell_safe(&link));
     }
     0
 }
@@ -386,13 +399,11 @@ async fn fork(link: &str, json_output: bool) -> i32 {
         if json_output {
             println!("{}", result);
         } else {
-            println!(
-                "{}",
-                result
-                    .get("link")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-            );
+            let link = result
+                .get("link")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            println!("{}", shell_safe(link));
         }
         Ok(0)
     })
