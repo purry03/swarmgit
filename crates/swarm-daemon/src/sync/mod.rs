@@ -118,6 +118,7 @@ pub async fn sync_repo(
             ),
         );
     }
+    let retry_candidates = dial::dedupe(candidates.clone(), net.node_id);
     dialer
         .dial_all(
             net,
@@ -225,9 +226,37 @@ pub async fn sync_repo(
     );
     let (mut accepted, mut rejected) =
         fetch::fetch_heads(repo, &mut net_state, &mut dialer.connected).await;
+    if net_state.signers.is_empty() && dialer.drop_failed() > 0 {
+        // A listed session that cannot answer is dead (the network changed,
+        // the peer restarted). Dial the same peers again on fresh sessions.
+        progress.say("find", "a session was stale; reconnecting");
+        let first = dialer.connected.len();
+        dialer
+            .dial_all(net, repo, retry_candidates, MAX_SESSIONS)
+            .await;
+        let (more_accepted, more_rejected) =
+            fetch::fetch_heads(repo, &mut net_state, &mut dialer.connected[first..]).await;
+        accepted += more_accepted;
+        rejected += more_rejected;
+    }
     if net_state.signers.is_empty() {
         abort(dht_lookup);
-        return Err(NetError::NoPeers);
+        let detail = dialer
+            .connected
+            .iter()
+            .map(|peer| {
+                let node = peer.node().to_base32();
+                let why = peer.note.as_deref().unwrap_or("gave no repo state");
+                format!("{}: {why}", &node[..node.len().min(8)])
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(NetError::NoPeersTried(format!(
+            "connected to {} peer(s) but none gave this repo's state ({detail}). The peer \
+             may not hold this repo, or may still be setting it up; try again, or check \
+             `swarm status` on the peer.",
+            dialer.connected.len()
+        )));
     }
 
     // DHT-5: the head pointer says which root seq exists. While our peers

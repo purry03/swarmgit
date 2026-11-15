@@ -36,13 +36,22 @@ pub async fn fetch_heads(
             .await;
         let envelopes = match reply {
             Ok(Message::Heads { envelopes, .. }) => envelopes,
-            Ok(_) => continue,
+            Ok(_) => {
+                tracing::debug!(node = %peer.node().to_hex(), "unexpected reply to GetHeads");
+                peer.note = Some("sent an unexpected reply to the state request".into());
+                continue;
+            }
             Err(err) => {
-                tracing::debug!(code = err.code(), error = %err, "GetHeads failed");
+                tracing::debug!(node = %peer.node().to_hex(), code = err.code(), error = %err, "GetHeads failed");
+                peer.note = Some(format!("state request failed: {err}"));
                 peer.failed = true;
                 continue;
             }
         };
+        if envelopes.is_empty() {
+            tracing::debug!(node = %peer.node().to_hex(), "peer has no manifest for this repo");
+            peer.note = Some("has no manifest for this repo".into());
+        }
         for bytes in envelopes {
             let Ok(verified) = verify_envelope(&bytes) else {
                 rejected += 1;

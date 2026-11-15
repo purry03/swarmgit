@@ -26,6 +26,7 @@ const MAX_DIALS: usize = 8;
 const MAX_PEX: usize = 32;
 
 /// An address to try, with the node ID pin when one is known.
+#[derive(Clone)]
 pub struct Candidate {
     pub addr: PeerAddr,
     pub node: Option<NodeId>,
@@ -36,6 +37,9 @@ pub struct Connected {
     pub handle: SessionHandle,
     pub tips: Vec<Oid>,
     pub failed: bool,
+    /// What went wrong asking this peer for the repo state, for the error
+    /// shown when no peer gave one.
+    pub note: Option<String>,
 }
 
 impl Connected {
@@ -44,6 +48,7 @@ impl Connected {
             handle,
             tips: Vec::new(),
             failed: false,
+            note: None,
         }
     }
 
@@ -141,6 +146,25 @@ impl Dialer {
             ok: 0,
             failed: 0,
         }
+    }
+
+    /// Close sessions whose state request failed (a dead connection that is
+    /// still listed, for example after a network change) and forget that
+    /// their addresses were tried, so the next dial round opens fresh ones.
+    /// Returns how many were dropped.
+    pub fn drop_failed(&mut self) -> usize {
+        let before = self.connected.len();
+        self.connected.retain(|peer| {
+            if peer.failed {
+                peer.handle.close();
+            }
+            !peer.failed
+        });
+        let dropped = before - self.connected.len();
+        if dropped > 0 {
+            self.tried.clear();
+        }
+        dropped
     }
 
     fn has_node(&self, node: Option<NodeId>) -> bool {
