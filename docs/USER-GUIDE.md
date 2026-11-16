@@ -307,7 +307,7 @@ upload of that repo is running; run it again a moment later.
 | `SWARM_DHT_BOOTSTRAP` | Comma-separated `host:port` list that replaces the built-in DHT bootstrap nodes (tests point it at a local testnet). |
 | `SWARM_DHT_BIND` | IP the DHT UDP socket binds to. |
 | `SWARM_DHT_PORT` | DHT UDP port; ephemeral by default. Known DHT nodes are kept in `swarm.db` and reused on the next start. |
-| `SWARM_RELAYS` | Comma-separated `host:port` relays to register with and to dial through (at most two are used). Empty by default. |
+| `SWARM_RELAYS` | Comma-separated `host:port` relays to register with and to dial through. Empty by default. |
 | `SWARM_RELAY_MODE` | `auto` (default) and `always` register with the configured relays; `off` never registers and ignores relay hints. |
 | `SWARM_RELAY_DELAY_MS` | Delay before a relay dial when a direct address for the same node is also tried, default `1500`. |
 | `SWARM_NO_UPNP` | `1` skips the best-effort UPnP IGD port mapping of the listen port. |

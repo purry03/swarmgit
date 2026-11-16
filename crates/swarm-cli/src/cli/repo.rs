@@ -98,3 +98,56 @@ pub(super) async fn gc(link: &str, json_output: bool) -> i32 {
     })
     .await
 }
+
+/// The daemon writes and reads the file, so hand it an absolute path.
+fn absolute(path: &std::path::Path) -> Result<String, ClientError> {
+    std::path::absolute(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|err| ClientError::Unreachable(err.to_string()))
+}
+
+pub(super) async fn export(link: &str, output: &std::path::Path, json_output: bool) -> i32 {
+    let (repo, _) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let output = output.to_path_buf();
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "export",
+                json!({ "repo": repo.to_base32(), "path": absolute(&output)? }),
+            )
+            .await?;
+        if json_output {
+            println!("{result}");
+        } else {
+            println!("{}", output.display());
+        }
+        Ok(0)
+    })
+    .await
+}
+
+pub(super) async fn import(file: &std::path::Path, json_output: bool) -> i32 {
+    let file = file.to_path_buf();
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call("import", json!({ "path": absolute(&file)? }))
+            .await?;
+        if json_output {
+            println!("{result}");
+        } else if let Some(link) = result.get("link").and_then(Value::as_str) {
+            println!("{link}");
+        }
+        Ok(0)
+    })
+    .await
+}

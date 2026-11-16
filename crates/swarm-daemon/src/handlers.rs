@@ -64,6 +64,8 @@ async fn dispatch(
         "seed" => repo::set_seeding(state, args, true).await,
         "unseed" => repo::set_seeding(state, args, false).await,
         "fork" => repo::fork(state, args).await,
+        "export" => repo::export(state, args).await,
+        "import" => repo::import(state, args).await,
         "gc" => repo::gc(state, args).await,
         "stop" => Ok(json!({ "stopped": true })),
         other => Err(IpcError::new(

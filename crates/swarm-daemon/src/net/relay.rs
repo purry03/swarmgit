@@ -17,8 +17,6 @@ use tokio::sync::Semaphore;
 
 use super::NetState;
 
-/// Most relays this node registers with (REL-13).
-pub const MAX_REGISTRATIONS: usize = 2;
 /// Relayed handshakes in flight at once.
 const MAX_RELAYED_HANDSHAKES: usize = 16;
 /// First and largest delay between failed first registrations.
@@ -151,7 +149,7 @@ pub fn start(net: &Arc<NetState>) {
         tracing::info!("relays disabled by SWARM_RELAY_MODE=off");
         return;
     }
-    let names: Vec<String> = configured().into_iter().take(MAX_REGISTRATIONS).collect();
+    let names: Vec<String> = configured();
     if names.is_empty() {
         return;
     }

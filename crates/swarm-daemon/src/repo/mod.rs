@@ -1,9 +1,11 @@
 //! Repo operations behind the IPC commands: init, sync and publish.
 
 mod admin;
+mod bundle;
 
 use admin::announce_routes;
 pub use admin::{fork, gc, list_repos, repo_info, set_seeding, status};
+pub use bundle::{export, import};
 
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};

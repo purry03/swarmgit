@@ -11,7 +11,7 @@ use swarm_store::git::{self, Git};
 use swarm_store::{keyio, Home};
 
 mod repo;
-use repo::{gc, resolve_repo, unseed};
+use repo::{export, gc, import, resolve_repo, unseed};
 
 #[derive(Parser)]
 #[command(name = "swarm", version, about = "Zero-setup peer-to-peer git")]
@@ -73,6 +73,25 @@ enum Cmd {
     Fork {
         /// The source link, optionally with hints.
         link: String,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Write a repo and its signed state to a bundle file for offline transfer.
+    Export {
+        /// A repo ID or link.
+        link: String,
+        /// Bundle file to write.
+        #[arg(short = 'o', long = "output", value_name = "FILE")]
+        output: PathBuf,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read a bundle file, making its repo available offline.
+    Import {
+        /// Bundle file to read.
+        file: PathBuf,
         /// Print one JSON object on stdout.
         #[arg(long)]
         json: bool,
@@ -596,6 +615,8 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Unseed { link, json } => unseed(&link, json).await,
         Cmd::Gc { link, json } => gc(&link, json).await,
         Cmd::Fork { link, json } => fork(&link, json).await,
+        Cmd::Export { link, output, json } => export(&link, &output, json).await,
+        Cmd::Import { file, json } => import(&file, json).await,
         Cmd::Key {
             command: KeyCmd::Backup { repo, output },
         } => key_backup(&repo, &output),
