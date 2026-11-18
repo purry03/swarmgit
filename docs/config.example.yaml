@@ -1,0 +1,28 @@
+# Swarmgit settings. Installed as /etc/swarmgit/config.yaml.
+#
+# Every key is optional and matches an environment variable (listen is
+# SWARM_LISTEN, and so on). An environment variable that is set always wins,
+# then ~/.config/swarmgit/config.yaml, then this file. Set SWARM_CONFIG to
+# read one specific file instead.
+
+# home: /var/lib/swarmgit          # data directory (SWARM_HOME)
+# listen: 0.0.0.0:42424            # peer listen address
+# advertise: myhost.example.org    # host or IP placed in `swarm link` hints
+
+# Relays let peers behind NAT or mobile data reach each other (see the guide).
+# relays:
+#   - relay.example.org:42425
+# relay_mode: auto                 # auto | always | off
+# relay_delay_ms: 1500
+
+# lan: true                        # LAN multicast discovery
+# dht: true                        # Mainline DHT discovery
+# upnp: true                       # UPnP port mapping
+# find_timeout: 30                 # seconds a first clone waits for the LAN
+# max_pack_bytes: 2147483648
+# idle_exit_minutes: 30
+# log: info                        # tracing filter
+
+# Static mirror base URLs (see `swarm mirror export`).
+# mirrors:
+#   - https://example.org/swarm

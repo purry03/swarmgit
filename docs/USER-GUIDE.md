@@ -295,6 +295,22 @@ upload of that repo is running; run it again a moment later.
 
 ## 8. Configuration
 
+Settings can live in a YAML file instead of environment variables. The `.deb`
+and `.rpm` install a commented example at `/etc/swarmgit/config.yaml`
+(`docs/config.example.yaml` in the source tree). A per-user file at
+`~/.config/swarmgit/config.yaml` overrides it, and `SWARM_CONFIG=/path/file.yaml`
+reads one specific file. An environment variable that is set always wins.
+
+```yaml
+listen: 0.0.0.0:42424
+relays: [relay.example.org:42425]
+lan: false          # true/false switches replace the SWARM_NO_* variables
+```
+
+Each key matches a variable below with the `SWARM_` prefix dropped and the name
+lower-cased (`relay_delay_ms` is `SWARM_RELAY_DELAY_MS`); `lan`, `dht` and
+`upnp` take `true` or `false`. Unknown keys are reported and ignored.
+
 | Variable | Meaning |
 | --- | --- |
 | `SWARM_HOME` | Data directory. Defaults to `~/.swarm`. |

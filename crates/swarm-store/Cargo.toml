@@ -11,6 +11,8 @@ publish = false
 blake3.workspace = true
 hex.workspace = true
 rusqlite.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
 swarm-core = { path = "../swarm-core" }
 thiserror.workspace = true
 tokio.workspace = true

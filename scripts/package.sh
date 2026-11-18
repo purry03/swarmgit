@@ -403,6 +403,9 @@ EOF
         for doc in README.md CHANGELOG.md; do
             [[ -f $doc ]] && install -m 0644 "$doc" "$stage/usr/share/doc/swarmgit/$doc"
         done
+        mkdir -p "$stage/etc/swarmgit"
+        install -m 0644 docs/config.example.yaml "$stage/etc/swarmgit/config.yaml"
+        echo /etc/swarmgit/config.yaml >"$stage/DEBIAN/conffiles"
 
         local size
         # Sum apparent sizes instead of `du`: on overlayfs/ZFS a copied file can
@@ -436,6 +439,7 @@ EOF
         mkdir -p "$top"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} "$src"
         install -m 0755 "$BIN" "$src/swarm"
         [[ -f README.md ]] && install -m 0644 README.md "$src/README.md"
+        install -m 0644 docs/config.example.yaml "$src/config.yaml"
 
         cat >"$spec" <<EOF
 # Strip/BRP hooks and automatic dependency generation assume a full Fedora
@@ -462,6 +466,7 @@ helper.
 %install
 install -Dpm 0755 $src/swarm %{buildroot}%{_bindir}/swarm
 ln -sfn swarm %{buildroot}%{_bindir}/git-remote-swarm
+install -Dpm 0644 $src/config.yaml %{buildroot}/etc/swarmgit/config.yaml
 EOF
         if [[ -f $src/README.md ]]; then
             cat >>"$spec" <<EOF
@@ -473,6 +478,7 @@ EOF
 %files
 %{_bindir}/swarm
 %{_bindir}/git-remote-swarm
+%config(noreplace) /etc/swarmgit/config.yaml
 EOF
         [[ -f $src/README.md ]] && echo '%{_docdir}/swarmgit/README.md' >>"$spec"
 
