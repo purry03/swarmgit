@@ -305,7 +305,7 @@ pub async fn sync_repo(
     }
     let resolved = store.resolve(&net_state);
     let haves = existing_haves(&store, &resolved).await;
-    let missing_now = || missing(&store, &store.resolve(&net_state));
+    let missing_now = || missing(&store, &store.resolve(&net_state), &net_state);
     progress.say("pack", "downloading objects");
     fetch::fetch_missing(
         &store,
@@ -411,10 +411,19 @@ async fn head_seq(net: &NetState, repo: RepoId, state: &AcceptState) -> u64 {
         .map_or(0, |head| head.seq)
 }
 
-fn missing(store: &RepoStore, resolved: &swarm_core::Resolved) -> Vec<Oid> {
+/// Objects to download: the canonical tips, and the tips every authorized
+/// signer lists. A ref whose candidates diverge can only be resolved (or
+/// reported as a conflict) once all of them are here (5.5).
+fn missing(store: &RepoStore, resolved: &swarm_core::Resolved, state: &AcceptState) -> Vec<Oid> {
+    let signed = state
+        .signers
+        .iter()
+        .filter(|(signer, _)| state.is_authorized(**signer))
+        .flat_map(|(_, stored)| stored.manifest.refs.values());
     let mut missing: Vec<Oid> = resolved
         .canonical
         .values()
+        .chain(signed)
         .filter(|oid| !object_present(store, oid))
         .cloned()
         .collect();

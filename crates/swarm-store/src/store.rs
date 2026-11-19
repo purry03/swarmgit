@@ -188,7 +188,35 @@ impl RepoStore {
     /// Resolve canonical refs using the store's object database.
     #[must_use]
     pub fn resolve(&self, state: &AcceptState) -> Resolved {
-        resolve(state, &GitAncestry::new(self.store_path()))
+        // A conflicting ref keeps the value it has now (5.5), so hand the
+        // resolver what the store holds.
+        let mut current = state.clone();
+        current.canonical = self.refs_now();
+        resolve(&current, &GitAncestry::new(self.store_path()))
+    }
+
+    /// `refs/heads` and `refs/tags` as they are in the store right now.
+    fn refs_now(&self) -> BTreeMap<String, Oid> {
+        let output = std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(self.store_path())
+            .args([
+                "for-each-ref",
+                "--format=%(objectname) %(refname)",
+                "refs/heads",
+                "refs/tags",
+            ])
+            .output();
+        let mut refs = BTreeMap::new();
+        let Ok(output) = output else { return refs };
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some((oid, name)) = line.split_once(' ') {
+                if let Ok(bytes) = hex::decode(oid) {
+                    refs.insert(name.to_string(), Oid::new(bytes));
+                }
+            }
+        }
+        refs
     }
 
     /// Remove `refs/swarm/*` at startup (ST-5).

@@ -151,3 +151,113 @@ pub(super) async fn import(file: &std::path::Path, json_output: bool) -> i32 {
     })
     .await
 }
+
+/// `swarm key new|id`: print the key ID so it can be sent to the root owner.
+pub(super) async fn key_cmd(cmd: &'static str, repo: &str) -> i32 {
+    let repo = match parse_repo(repo) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(cmd, json!({ "repo": repo.to_base32() }))
+            .await?;
+        println!(
+            "{}",
+            result
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        );
+        if let Some(role) = result.get("role").and_then(Value::as_str) {
+            eprintln!("swarm: this key is {role} for the repo");
+        }
+        Ok(0)
+    })
+    .await
+}
+
+pub(super) async fn maintainers_cmd(
+    op: &'static str,
+    repo: &str,
+    key: Option<&str>,
+    globs: Vec<String>,
+) -> i32 {
+    let repo = match parse_repo(repo) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let key = key.map(str::to_string);
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "maintainers",
+                json!({ "repo": repo.to_base32(), "op": op, "key": key, "globs": globs }),
+            )
+            .await?;
+        for item in result
+            .get("maintainers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let globs = item
+                .get("globs")
+                .and_then(Value::as_array)
+                .map(|g| {
+                    g.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            println!(
+                "{} {globs}",
+                item.get("key").and_then(Value::as_str).unwrap_or_default()
+            );
+        }
+        Ok(0)
+    })
+    .await
+}
+
+pub(super) async fn accept(repo: &str, refname: &str, signer: &str) -> i32 {
+    let repo = match parse_repo(repo) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let (refname, signer) = (refname.to_string(), signer.to_string());
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "accept_ref",
+                json!({ "repo": repo.to_base32(), "ref": refname, "signer": signer }),
+            )
+            .await?;
+        println!(
+            "{} {}",
+            refname,
+            result
+                .get("oid")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        );
+        Ok(0)
+    })
+    .await
+}

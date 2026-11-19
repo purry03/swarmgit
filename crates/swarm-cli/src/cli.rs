@@ -11,7 +11,7 @@ use swarm_store::git::{self, Git};
 use swarm_store::{keyio, Home};
 
 mod repo;
-use repo::{export, gc, import, resolve_repo, unseed};
+use repo::{accept, export, gc, import, key_cmd, maintainers_cmd, resolve_repo, unseed};
 
 #[derive(Parser)]
 #[command(name = "swarm", version, about = "Zero-setup peer-to-peer git")]
@@ -96,6 +96,20 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Add or remove maintainers, who may publish without the root key.
+    Maintainers {
+        #[command(subcommand)]
+        command: MaintainersCmd,
+    },
+    /// Settle a ref conflict here by taking one signer's value.
+    Accept {
+        /// A repo ID or link.
+        repo: String,
+        /// The ref in conflict, for example refs/heads/main.
+        refname: String,
+        /// The signer (key ID, hex or base32) whose value to take.
+        signer: String,
+    },
     /// Key management.
     Key {
         #[command(subcommand)]
@@ -115,7 +129,27 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum MaintainersCmd {
+    /// Authorize a key (root key only), optionally limited to ref globs.
+    Add {
+        repo: String,
+        /// The maintainer's key ID, from `swarm key new` or `swarm key id`.
+        key: String,
+        /// Ref globs the key may publish (default refs/heads/*).
+        globs: Vec<String>,
+    },
+    /// Remove a maintainer (root key only).
+    Remove { repo: String, key: String },
+    /// List the maintainers.
+    List { repo: String },
+}
+
+#[derive(Subcommand)]
 enum KeyCmd {
+    /// Create this machine's own key for a repo, to be authorized by the root.
+    New { repo: String },
+    /// Print the key ID of this machine's key for a repo.
+    Id { repo: String },
     /// Copy a repo signing key to FILE with mode 0600.
     Backup {
         repo: String,
@@ -620,6 +654,26 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Key {
             command: KeyCmd::Backup { repo, output },
         } => key_backup(&repo, &output),
+        Cmd::Key {
+            command: KeyCmd::New { repo },
+        } => key_cmd("key_new", &repo).await,
+        Cmd::Key {
+            command: KeyCmd::Id { repo },
+        } => key_cmd("key_id", &repo).await,
+        Cmd::Maintainers { command } => match command {
+            MaintainersCmd::Add { repo, key, globs } => {
+                maintainers_cmd("add", &repo, Some(&key), globs).await
+            }
+            MaintainersCmd::Remove { repo, key } => {
+                maintainers_cmd("remove", &repo, Some(&key), Vec::new()).await
+            }
+            MaintainersCmd::List { repo } => maintainers_cmd("list", &repo, None, Vec::new()).await,
+        },
+        Cmd::Accept {
+            repo,
+            refname,
+            signer,
+        } => accept(&repo, &refname, &signer).await,
         Cmd::Daemon {
             foreground,
             detach,

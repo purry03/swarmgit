@@ -2,22 +2,24 @@
 
 mod admin;
 mod bundle;
+mod maintainers;
+mod publish;
 
 use admin::announce_routes;
 pub use admin::{fork, gc, list_repos, repo_info, set_seeding, status};
 pub use bundle::{export, import};
+pub use maintainers::{accept_ref, key_id_of, key_new, maintainers};
+pub use publish::publish;
 
-use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use swarm_core::accept::{AcceptState, StoredManifest};
-use swarm_core::consts::{MAX_REFS, SUITE_HYBRID};
+use swarm_core::consts::SUITE_HYBRID;
 use swarm_core::crypto::{key_id, repo_id};
-use swarm_core::ids::{KeyId, Link, Oid, RepoId};
+use swarm_core::ids::{KeyId, Link, RepoId};
 use swarm_core::keyfile::RepoKey;
 use swarm_core::manifest::Manifest;
-use swarm_core::refname::is_valid_refname;
 use swarm_store::git::{self, Git};
 use swarm_store::RepoStore;
 
@@ -228,191 +230,4 @@ pub async fn sync(
 
 pub(crate) fn net_error(err: swarm_net::NetError) -> IpcError {
     IpcError::new(err.code(), err.to_string())
-}
-
-struct RootFields {
-    head: Option<String>,
-    maintainers: Option<Vec<swarm_core::manifest::Maintainer>>,
-    object_format: Option<String>,
-    tombstones: Option<Vec<String>>,
-    forked_from: Option<[u8; 32]>,
-    recovery: Option<[u8; 32]>,
-}
-
-fn copy_root_fields(prev: Option<&StoredManifest>, format: &str) -> RootFields {
-    match prev {
-        Some(stored) => RootFields {
-            head: stored.manifest.head.clone(),
-            maintainers: stored.manifest.maintainers.clone(),
-            object_format: stored
-                .manifest
-                .object_format
-                .clone()
-                .or_else(|| Some(format.to_string())),
-            tombstones: stored.manifest.tombstones.clone(),
-            forked_from: stored.manifest.forked_from,
-            recovery: stored.manifest.recovery,
-        },
-        None => RootFields {
-            head: None,
-            maintainers: None,
-            object_format: Some(format.to_string()),
-            tombstones: None,
-            forked_from: None,
-            recovery: None,
-        },
-    }
-}
-
-/// Restore store refs after a failed publish (ST-6).
-async fn restore_refs(store: &RepoStore, refs: &BTreeMap<String, Oid>) {
-    let _ = store.apply_canonical(refs).await;
-}
-
-/// `publish`: sign the store's current refs as the next root manifest.
-pub async fn publish(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
-    let repo = parse_repo(arg_str(args, "repo")?)?;
-    let row = db_repo(state, repo)?;
-    let store = RepoStore::new(state.home.clone(), repo);
-    let mut accepted = store.load_state()?;
-    let restore: BTreeMap<String, Oid> = accepted
-        .root_manifest()
-        .map(|stored| stored.manifest.refs.clone())
-        .unwrap_or_default();
-
-    let key = match store.load_key() {
-        Ok(Some(key)) => key,
-        Ok(None) => {
-            restore_refs(&store, &restore).await;
-            return Err(IpcError::new(
-                "no_signing_key",
-                "no signing key for this repo",
-            ));
-        }
-        Err(err) => {
-            restore_refs(&store, &restore).await;
-            return Err(err.into());
-        }
-    };
-    let signer = match key.signer() {
-        Ok(signer) => signer,
-        Err(err) => {
-            restore_refs(&store, &restore).await;
-            return Err(IpcError::new("bad_keys", err.to_string()));
-        }
-    };
-    let bundle = signer.bundle();
-    let signer_id = key_id(&bundle);
-    if signer_id.as_bytes() != repo.as_bytes() {
-        restore_refs(&store, &restore).await;
-        return Err(IpcError::new(
-            "unauthorized",
-            "key file is not the root key for this repo",
-        ));
-    }
-
-    let prev = accepted.signers.get(&signer_id).cloned();
-    let current = store.read_refs().await?;
-    let mut refs = BTreeMap::new();
-    for (name, oid) in &current {
-        let allowed = (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
-            && is_valid_refname(name);
-        if allowed {
-            refs.insert(name.clone(), oid.clone());
-        }
-    }
-    if refs.len() > MAX_REFS {
-        restore_refs(&store, &restore).await;
-        return Err(IpcError::new("too_many_refs", "too many refs to publish"));
-    }
-
-    let root = copy_root_fields(prev.as_ref(), &row.object_format);
-    let (head, maintainers, object_format, tombstones, forked_from, recovery) = (
-        root.head,
-        root.maintainers,
-        root.object_format,
-        root.tombstones,
-        root.forked_from,
-        root.recovery,
-    );
-
-    if let Some(stored) = &prev {
-        let same = stored.manifest.refs == refs
-            && stored.manifest.head == head
-            && stored.manifest.maintainers == maintainers
-            && stored.manifest.object_format == object_format
-            && stored.manifest.tombstones == tombstones
-            && stored.manifest.forked_from == forked_from
-            && stored.manifest.recovery == recovery
-            && stored.manifest.new_root.is_none();
-        if same {
-            return Ok(json!({
-                "seq": stored.manifest.seq,
-                "manifest_id": hex::encode(stored.manifest_id),
-                "noop": true,
-            }));
-        }
-    }
-
-    let (seq, prev_id) = match &prev {
-        Some(stored) => (stored.manifest.seq + 1, stored.manifest_id),
-        None => (1, [0u8; 32]),
-    };
-    let manifest = Manifest {
-        version: 1,
-        repo_id: *repo.as_bytes(),
-        signer: *signer_id.as_bytes(),
-        seq,
-        prev: prev_id,
-        ts: now() as u64,
-        refs: refs.clone(),
-        head,
-        maintainers,
-        object_format,
-        tombstones,
-        forked_from,
-        recovery,
-        new_root: None,
-        signer_keys: bundle,
-        suite: u64::from(SUITE_HYBRID),
-    };
-    let envelope = match manifest.sign(&*signer) {
-        Ok(envelope) => envelope,
-        Err(err) => {
-            restore_refs(&store, &restore).await;
-            return Err(IpcError::new(err.to_string(), err.to_string()));
-        }
-    };
-    if let Err(err) = accepted.accept(envelope.clone()) {
-        restore_refs(&store, &restore).await;
-        return Err(IpcError::new(err.to_string(), err.to_string()));
-    }
-    let stored = StoredManifest::from(envelope);
-    if let Err(err) = store.write_manifest(&stored) {
-        restore_refs(&store, &restore).await;
-        return Err(err.into());
-    }
-    {
-        let db = state
-            .db
-            .lock()
-            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-        db.upsert_signer(repo, signer_id, seq, &stored.manifest_id)?;
-        db.set_last_sync(repo, now())?;
-    }
-    let resolved = store.resolve(&accepted);
-    store.apply_canonical(&resolved.canonical).await?;
-    if let Some(net) = state.net() {
-        net.announce(repo, stored.envelope.clone()).await;
-        if let Some(seed) = key.ed_seed() {
-            net.put_head(repo, seed, stored.manifest_id, seq);
-        }
-        net.announce_dht(repo);
-    }
-
-    Ok(json!({
-        "seq": seq,
-        "manifest_id": hex::encode(stored.manifest_id),
-        "noop": false,
-    }))
 }
