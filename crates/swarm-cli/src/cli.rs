@@ -11,7 +11,10 @@ use swarm_store::git::{self, Git};
 use swarm_store::{keyio, Home};
 
 mod repo;
-use repo::{accept, export, gc, import, key_cmd, maintainers_cmd, resolve_repo, unseed};
+use repo::{
+    accept, export, gc, import, key_cmd, maintainers_cmd, recovery_cmd, resolve_repo, rotate_cmd,
+    unseed,
+};
 
 #[derive(Parser)]
 #[command(name = "swarm", version, about = "Zero-setup peer-to-peer git")]
@@ -146,6 +149,18 @@ enum MaintainersCmd {
 
 #[derive(Subcommand)]
 enum KeyCmd {
+    /// Create a recovery key, name it in the repo, and save it to FILE (keep it offline).
+    Recovery {
+        repo: String,
+        #[arg(short = 'o', long = "output", value_name = "FILE")]
+        output: PathBuf,
+    },
+    /// Move the root to a new key, authorized by the recovery key file.
+    Rotate {
+        repo: String,
+        #[arg(long, value_name = "FILE")]
+        recovery: PathBuf,
+    },
     /// Create this machine's own key for a repo, to be authorized by the root.
     New { repo: String },
     /// Print the key ID of this machine's key for a repo.
@@ -654,6 +669,12 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Key {
             command: KeyCmd::Backup { repo, output },
         } => key_backup(&repo, &output),
+        Cmd::Key {
+            command: KeyCmd::Recovery { repo, output },
+        } => recovery_cmd(&repo, &output).await,
+        Cmd::Key {
+            command: KeyCmd::Rotate { repo, recovery },
+        } => rotate_cmd(&repo, &recovery).await,
         Cmd::Key {
             command: KeyCmd::New { repo },
         } => key_cmd("key_new", &repo).await,

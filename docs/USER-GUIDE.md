@@ -279,9 +279,16 @@ swarm-relay --listen 0.0.0.0:42425 --name relay.example.org:42425
 `--name` is the exact `host:port` clients use to reach it (repeat it for
 several names). Limits: `--max-listeners`, `--max-splices`, `--idle-secs`.
 
-*Use a relay* by setting `SWARM_RELAYS=relay.example.org:42425` on the
-machine that cannot be reached (the seeder), and on the cloning machine if it
-also needs it. The seeder registers with the relay and then adds
+*Use a relay* by adding it to the seeder's config file:
+
+```yaml
+relays:
+  - relay.example.org:42425
+```
+
+Put this in `/etc/swarmgit/config.yaml` for a system-wide setting, or
+`~/.config/swarmgit/config.yaml` for one user. `SWARM_RELAYS` is also supported
+as an environment-variable override. The seeder registers with the relay and then adds
 `h=relay:relay.example.org:42425@<node>` to its `swarm link` output and to
 the link printed by `swarm init`. Anyone cloning with that link reaches it
 through the relay when the direct address does not work. `swarm status` shows
@@ -295,41 +302,47 @@ upload of that repo is running; run it again a moment later.
 
 ## 8. Configuration
 
-Settings can live in a YAML file instead of environment variables. The `.deb`
+Settings can live in YAML files instead of environment variables. The `.deb`
 and `.rpm` install a commented example at `/etc/swarmgit/config.yaml`
 (`docs/config.example.yaml` in the source tree). A per-user file at
-`~/.config/swarmgit/config.yaml` overrides it, and `SWARM_CONFIG=/path/file.yaml`
-reads one specific file. An environment variable that is set always wins.
+`~/.config/swarmgit/config.yaml` overrides the system file. If `SWARM_CONFIG`
+is set, Swarmgit reads that specific file instead; it must exist. Environment
+variables take precedence over values from any config file.
 
 ```yaml
 listen: 0.0.0.0:42424
-relays: [relay.example.org:42425]
-lan: false          # true/false switches replace the SWARM_NO_* variables
+relays:
+  - relay.example.org:42425
+lan: false
+dht: true
+upnp: true
 ```
 
-Each key matches a variable below with the `SWARM_` prefix dropped and the name
-lower-cased (`relay_delay_ms` is `SWARM_RELAY_DELAY_MS`); `lan`, `dht` and
-`upnp` take `true` or `false`. Unknown keys are reported and ignored.
+Use the YAML key in the table, or its environment variable override. Lists such
+as `relays` and `dht_bootstrap` can be written as YAML lists or comma-separated
+environment-variable values. `lan`, `dht` and `upnp` take `true` or `false` in
+YAML. Unknown keys are reported and ignored.
 
-| Variable | Meaning |
-| --- | --- |
-| `SWARM_HOME` | Data directory. Defaults to `~/.swarm`. |
-| `SWARM_LISTEN` | Peer listen address, default `0.0.0.0:42424`. If busy, the port becomes ephemeral. |
-| `SWARM_ADVERTISE` | Host name or IP placed in `swarm link` hints. Set this behind NAT or in Docker. |
-| `SWARM_NO_LAN` | `1` turns off LAN multicast discovery (UDP 42099, groups `239.255.42.99` and `ff02::4242`). Other routes keep working. |
-| `SWARM_LAN_PORT` | LAN discovery UDP port, default `42099`. |
-| `SWARM_FIND_TIMEOUT` | Seconds a first clone waits for LAN answers, default `30`. |
-| `SWARM_NO_DHT` | `1` turns off the Mainline DHT route (announce, peer lookup and the head pointer). Other routes keep working. |
-| `SWARM_DHT_BOOTSTRAP` | Comma-separated `host:port` list that replaces the built-in DHT bootstrap nodes (tests point it at a local testnet). |
-| `SWARM_DHT_BIND` | IP the DHT UDP socket binds to. |
-| `SWARM_DHT_PORT` | DHT UDP port; ephemeral by default. Known DHT nodes are kept in `swarm.db` and reused on the next start. |
-| `SWARM_RELAYS` | Comma-separated `host:port` relays to register with and to dial through. Empty by default. |
-| `SWARM_RELAY_MODE` | `auto` (default) and `always` register with the configured relays; `off` never registers and ignores relay hints. |
-| `SWARM_RELAY_DELAY_MS` | Delay before a relay dial when a direct address for the same node is also tried, default `1500`. |
-| `SWARM_NO_UPNP` | `1` skips the best-effort UPnP IGD port mapping of the listen port. |
-| `SWARM_MAX_PACK_BYTES` | Largest served or accepted pack, default 2 GiB. |
-| `SWARM_LOG` | Tracing filter for the daemon, default `info`. |
-| `SWARM_IDLE_EXIT_MINUTES` | Idle shutdown for an unseeded daemon, default 30. |
+| YAML key | Environment override | Meaning |
+| --- | --- | --- |
+| `home` | `SWARM_HOME` | Data directory. Defaults to the platform data directory. |
+| `listen` | `SWARM_LISTEN` | Peer listen address, default `0.0.0.0:42424`. If busy, the port becomes ephemeral. |
+| `advertise` | `SWARM_ADVERTISE` | Host name or IP placed in `swarm link` hints. Set this behind NAT or in Docker. |
+| `relays` | `SWARM_RELAYS` | Relays to register with or dial through; at most two are used. |
+| `relay_mode` | `SWARM_RELAY_MODE` | `auto` (default), `always`, or `off`. |
+| `relay_delay_ms` | `SWARM_RELAY_DELAY_MS` | Relay fallback delay when a direct address is also available; default `1500`. |
+| `lan` | `SWARM_NO_LAN` | Enable or disable LAN discovery. Environment value `1` disables it. |
+| `lan_port` | `SWARM_LAN_PORT` | LAN discovery UDP port, default `42099`. |
+| `dht` | `SWARM_NO_DHT` | Enable or disable Mainline DHT discovery. Environment value `1` disables it. |
+| `dht_bootstrap` | `SWARM_DHT_BOOTSTRAP` | Bootstrap `host:port` list; replaces built-in nodes when set. |
+| `dht_bind` | `SWARM_DHT_BIND` | IP address for the DHT UDP socket. |
+| `dht_port` | `SWARM_DHT_PORT` | DHT UDP port; ephemeral by default. |
+| `upnp` | `SWARM_NO_UPNP` | Enable or disable best-effort UPnP port mapping. Environment value `1` disables it. |
+| `find_timeout` | `SWARM_FIND_TIMEOUT` | Seconds a first clone waits for LAN answers, default `30`. |
+| `max_pack_bytes` | `SWARM_MAX_PACK_BYTES` | Largest pack served or accepted, default 2 GiB. |
+| `idle_exit_minutes` | `SWARM_IDLE_EXIT_MINUTES` | Idle shutdown for an unseeded daemon, default 30. |
+| `log` | `SWARM_LOG` | Tracing filter, default `info`. |
+| `mirrors` | `SWARM_MIRRORS` | Static mirror base URLs. |
 
 `$SWARM_HOME/daemon.json` records the actual port, PID and listen address. The
 daemon starts on demand and stops with `swarm daemon stop`.
@@ -372,8 +385,9 @@ Inside the compose network use `a`/`b`, not `127.0.0.1`.
 **Two machines on different networks (home Wi-Fi and mobile data, CGNAT)
 cannot clone from each other** — neither can accept inbound connections, so
 use a relay (section 7): run `swarm-relay` on a public host, set
-`SWARM_RELAYS` on the seeding machine, and clone with the link that
-`swarm link` prints afterwards (it contains the `h=relay:` hint). Check
+`relays` in the seeder's `/etc/swarmgit/config.yaml` (or set `SWARM_RELAYS`),
+then clone with the link that `swarm link` prints afterwards (it contains the
+`h=relay:` hint). Check
 `swarm status` says `relay ... registered`. A `no_peers` error that says
 "through a relay" means the relay was tried but the seeder is not registered
 with it or is offline.

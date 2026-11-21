@@ -4,12 +4,14 @@ mod admin;
 mod bundle;
 mod maintainers;
 mod publish;
+mod recovery;
 
 use admin::announce_routes;
 pub use admin::{fork, gc, list_repos, repo_info, set_seeding, status};
 pub use bundle::{export, import};
 pub use maintainers::{accept_ref, key_id_of, key_new, maintainers};
 pub use publish::publish;
+pub use recovery::{recovery_set, rotate};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,7 +19,7 @@ use serde_json::{json, Value};
 use swarm_core::accept::{AcceptState, StoredManifest};
 use swarm_core::consts::SUITE_HYBRID;
 use swarm_core::crypto::{key_id, repo_id};
-use swarm_core::ids::{KeyId, Link, RepoId};
+use swarm_core::ids::{Link, RepoId};
 use swarm_core::keyfile::RepoKey;
 use swarm_core::manifest::Manifest;
 use swarm_store::git::{self, Git};
@@ -77,9 +79,9 @@ pub(crate) fn db_repo(state: &DaemonState, repo: RepoId) -> Result<swarm_store::
 }
 
 pub(crate) fn root_seq(state: &AcceptState, repo: RepoId) -> u64 {
+    let _ = repo;
     state
-        .signers
-        .get(&KeyId::from_bytes(*repo.as_bytes()))
+        .root_manifest()
         .map(|stored| stored.manifest.seq)
         .unwrap_or(0)
 }

@@ -24,9 +24,12 @@ pub async fn fetch_heads(
     state: &mut AcceptState,
     peers: &mut [Connected],
 ) -> (usize, usize) {
-    let mut accepted = 0;
     let mut rejected = 0;
-    for peer in peers.iter_mut() {
+    // Collect first, accept after: a root rotation and the new root's own
+    // manifest may come from different peers, in any order (5.4 step 2).
+    let mut verified_all = Vec::new();
+    let mut owners = Vec::new();
+    for (peer_ix, peer) in peers.iter_mut().enumerate() {
         let Some(repo_ix) = peer.handle.info().repo_ix(repo) else {
             continue;
         };
@@ -53,20 +56,30 @@ pub async fn fetch_heads(
             peer.note = Some("has no manifest for this repo".into());
         }
         for bytes in envelopes {
-            let Ok(verified) = verify_envelope(&bytes) else {
-                rejected += 1;
-                continue;
-            };
-            let tips: Vec<Oid> = verified.manifest.refs.values().cloned().collect();
-            if state.accept(verified).is_ok() {
-                accepted += 1;
-                for tip in tips {
-                    if !peer.tips.iter().any(|known| known == &tip) {
-                        peer.tips.push(tip);
-                    }
+            match verify_envelope(&bytes) {
+                Ok(verified) => {
+                    verified_all.push(verified);
+                    owners.push(peer_ix);
                 }
-            } else {
-                rejected += 1;
+                Err(_) => rejected += 1,
+            }
+        }
+    }
+    let tips: Vec<Vec<Oid>> = verified_all
+        .iter()
+        .map(|verified| verified.manifest.refs.values().cloned().collect())
+        .collect();
+    let mut accepted = 0;
+    for (index, outcome) in state.accept_batch_indexed(verified_all) {
+        if outcome.is_err() {
+            rejected += 1;
+            continue;
+        }
+        accepted += 1;
+        let peer = &mut peers[owners[index]];
+        for tip in &tips[index] {
+            if !peer.tips.iter().any(|known| known == tip) {
+                peer.tips.push(tip.clone());
             }
         }
     }

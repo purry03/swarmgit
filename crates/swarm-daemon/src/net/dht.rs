@@ -122,7 +122,12 @@ impl NetState {
         let Ok(state) = store.load_state() else {
             return;
         };
-        let Some(root) = state.signers.get(&KeyId::from_bytes(*repo.as_bytes())) else {
+        // The pointer belongs to the original root key; after a rotation it
+        // is no longer published (DHT-5).
+        if state.root != KeyId::from_bytes(*repo.as_bytes()) {
+            return;
+        }
+        let Some(root) = state.root_manifest() else {
             return;
         };
         self.put_head(repo, seed, root.manifest_id, root.manifest.seq);

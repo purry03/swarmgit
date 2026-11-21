@@ -21,6 +21,11 @@ use crate::state::DaemonState;
 pub(crate) enum RootEdit {
     /// Replace the whole maintainer list.
     Maintainers(Vec<Maintainer>),
+    /// Name the recovery key (field 12).
+    Recovery([u8; 32]),
+    /// First manifest of a new root after a rotation: carry over the old
+    /// root's fields (maintainers, head, tombstones, recovery key).
+    Inherit(Box<StoredManifest>),
 }
 
 struct RootFields {
@@ -152,16 +157,24 @@ async fn publish_inner(
     }
 
     let fields = if is_root {
-        if edit.is_some() {
+        if matches!(edit, Some(RootEdit::Maintainers(_) | RootEdit::Recovery(_))) {
             // An edit republishes the root's own refs, so a maintainer's refs
             // are not absorbed into the root manifest.
             if let Some(stored) = &prev {
                 refs = stored.manifest.refs.clone();
             }
         }
-        let mut fields = copy_root_fields(prev.as_ref(), object_format);
-        if let Some(RootEdit::Maintainers(list)) = edit {
-            fields.maintainers = if list.is_empty() { None } else { Some(list) };
+        let base = match (&edit, &prev) {
+            (Some(RootEdit::Inherit(old)), None) => Some(&**old),
+            _ => prev.as_ref(),
+        };
+        let mut fields = copy_root_fields(base, object_format);
+        match edit {
+            Some(RootEdit::Maintainers(list)) => {
+                fields.maintainers = if list.is_empty() { None } else { Some(list) };
+            }
+            Some(RootEdit::Recovery(id)) => fields.recovery = Some(id),
+            _ => {}
         }
         fields
     } else {
@@ -243,7 +256,8 @@ async fn publish_inner(
     store.apply_canonical(&resolved.canonical).await?;
     if let Some(net) = state.net() {
         net.announce(repo, stored.envelope.clone()).await;
-        if is_root {
+        // The head pointer is bound to the original root key (DHT-5).
+        if signer_id.as_bytes() == repo.as_bytes() {
             if let Some(seed) = key.ed_seed() {
                 net.put_head(repo, seed, stored.manifest_id, seq);
             }

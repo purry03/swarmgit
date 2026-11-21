@@ -68,6 +68,8 @@ async fn dispatch(
         "key_id" => repo::key_id_of(state, args).await,
         "maintainers" => repo::maintainers(state, args).await,
         "accept_ref" => repo::accept_ref(state, args).await,
+        "recovery_set" => repo::recovery_set(state, args).await,
+        "rotate" => repo::rotate(state, args).await,
         "export" => repo::export(state, args).await,
         "import" => repo::import(state, args).await,
         "gc" => repo::gc(state, args).await,

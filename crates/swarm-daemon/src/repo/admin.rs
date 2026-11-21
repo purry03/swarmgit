@@ -63,6 +63,8 @@ fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, Ipc
         "repo": row.id.to_base32(),
         "link": format!("swarm://{}", row.id.to_base32()),
         "seq": root_seq(&accepted, row.id),
+        "root": accepted.root.to_base32(),
+        "recovery": accepted.recovery.is_some(),
         "refs": resolved.canonical.len(),
         "peers": peers,
         "seeding": row.seeding,

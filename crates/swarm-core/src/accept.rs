@@ -143,6 +143,11 @@ impl AcceptState {
         let is_root = signer == self.root;
         let is_recovery = self.recovery == Some(signer);
 
+        // Only a recovery manifest may carry `new_root` (5.1 key 13), and a
+        // recovery manifest has no other purpose.
+        if (manifest.suite == u64::from(SUITE_RECOVERY)) != manifest.new_root.is_some() {
+            return Err(ErrorCode::ForbiddenField);
+        }
         if manifest.suite == u64::from(SUITE_RECOVERY) {
             if !is_recovery {
                 return Err(ErrorCode::Unauthorized);
@@ -228,6 +233,18 @@ impl AcceptState {
         &mut self,
         envelopes: Vec<VerifiedEnvelope>,
     ) -> Vec<Result<AcceptOutcome, ErrorCode>> {
+        self.accept_batch_indexed(envelopes)
+            .into_iter()
+            .map(|(_, outcome)| outcome)
+            .collect()
+    }
+
+    /// Like [`Self::accept_batch`], with each outcome tagged by the position
+    /// of its envelope in the input (outcomes come in processing order).
+    pub fn accept_batch_indexed(
+        &mut self,
+        envelopes: Vec<VerifiedEnvelope>,
+    ) -> Vec<(usize, Result<AcceptOutcome, ErrorCode>)> {
         let repo_id = *self.repo_id.as_bytes();
         let root_id = *self.root.as_bytes();
         let mut indexed: Vec<(usize, VerifiedEnvelope)> =
@@ -246,7 +263,7 @@ impl AcceptState {
         });
         indexed
             .into_iter()
-            .map(|(_, env)| self.accept(env))
+            .map(|(index, env)| (index, self.accept(env)))
             .collect()
     }
 }

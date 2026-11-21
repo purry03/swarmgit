@@ -261,3 +261,61 @@ pub(super) async fn accept(repo: &str, refname: &str, signer: &str) -> i32 {
     })
     .await
 }
+
+pub(super) async fn recovery_cmd(repo: &str, output: &std::path::Path) -> i32 {
+    let repo = match parse_repo(repo) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let output = output.to_path_buf();
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "recovery_set",
+                json!({ "repo": repo.to_base32(), "path": absolute(&output)? }),
+            )
+            .await?;
+        println!("{}", result.get("recovery").and_then(Value::as_str).unwrap_or_default());
+        eprintln!(
+            "swarm: recovery key saved to {}; keep it offline. It is the only way back if the root key is lost or stolen.",
+            output.display()
+        );
+        Ok(0)
+    })
+    .await
+}
+
+pub(super) async fn rotate_cmd(repo: &str, recovery: &std::path::Path) -> i32 {
+    let repo = match parse_repo(repo) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let recovery = recovery.to_path_buf();
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "rotate",
+                json!({ "repo": repo.to_base32(), "recovery": absolute(&recovery)? }),
+            )
+            .await?;
+        println!(
+            "{}",
+            result
+                .get("new_root")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        );
+        Ok(0)
+    })
+    .await
+}

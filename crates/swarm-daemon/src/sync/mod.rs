@@ -403,7 +403,12 @@ fn abort(lookup: Option<tokio::task::JoinHandle<Vec<std::net::SocketAddr>>>) {
 
 /// The root seq the DHT head pointer announces, or 0.
 async fn head_seq(net: &NetState, repo: RepoId, state: &AcceptState) -> u64 {
-    let Some(root) = state.signers.get(&KeyId::from_bytes(*repo.as_bytes())) else {
+    // The DHT head pointer is signed by the original root key (DHT-5); it
+    // says nothing once a recovery rotation has moved the root.
+    if state.root != KeyId::from_bytes(*repo.as_bytes()) {
+        return 0;
+    }
+    let Some(root) = state.root_manifest() else {
         return 0;
     };
     net.dht_head(repo, &root.manifest.signer_keys)
@@ -433,9 +438,9 @@ fn missing(store: &RepoStore, resolved: &swarm_core::Resolved, state: &AcceptSta
 }
 
 fn root_seq(state: &AcceptState, repo: RepoId) -> u64 {
+    let _ = repo;
     state
-        .signers
-        .get(&KeyId::from_bytes(*repo.as_bytes()))
+        .root_manifest()
         .map(|stored| stored.manifest.seq)
         .unwrap_or(0)
 }
