@@ -2,6 +2,24 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## M6-M8 - bundles, maintainers, mirrors, recovery (2026-11-25)
+
+### Added
+
+- `swarm export` / `swarm import`: signed single-file bundles (6.6).
+- Maintainers with their own keys and scoped refs; conflicts are reported and
+  settled with `swarm accept` (M7).
+- `swarm key recovery` / `swarm key rotate`: suite-2 recovery key that moves
+  the root; `accept` rejects `new_root` from anyone else (M8).
+- Static mirrors: `https:`/`http:` hints, `SWARM_MIRRORS`, `swarm mirror
+  export`, fallback when no peer is reachable (M8).
+- YAML config files (`/etc/swarmgit/config.yaml`, per-user, `SWARM_CONFIG`).
+
+### Changed
+
+- The relay registration cap of two is gone; seeders register with every
+  configured relay.
+
 ## M5 - peer exchange, seeding, multi-peer fetch (2026-11-24)
 
 ### Added

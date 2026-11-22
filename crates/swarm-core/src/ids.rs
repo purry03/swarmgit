@@ -241,6 +241,10 @@ pub enum HintScheme {
     /// A node reached through a relay. The host and port are the relay's and
     /// the pin after `@` is the node behind it, so the pin is required.
     Relay,
+    /// A static mirror served over HTTPS (11.9 MIR-1). Not a peer.
+    Https,
+    /// A static mirror over plain HTTP, for tests and trusted networks.
+    Http,
 }
 
 impl HintScheme {
@@ -249,6 +253,8 @@ impl HintScheme {
             "tcp" => Some(Self::Tcp),
             "onion" => Some(Self::Onion),
             "relay" => Some(Self::Relay),
+            "https" => Some(Self::Https),
+            "http" => Some(Self::Http),
             _ => None,
         }
     }
@@ -258,6 +264,8 @@ impl HintScheme {
             Self::Tcp => "tcp",
             Self::Onion => "onion",
             Self::Relay => "relay",
+            Self::Https => "https",
+            Self::Http => "http",
         }
     }
 }

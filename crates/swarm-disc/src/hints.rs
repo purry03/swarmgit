@@ -39,6 +39,10 @@ pub async fn resolve_hints(hints: &[String]) -> Vec<Candidate> {
         let Some(hint) = Hint::parse(raw) else {
             continue;
         };
+        // Mirrors are static file hosts, not peers to dial.
+        if matches!(hint.scheme, HintScheme::Https | HintScheme::Http) {
+            continue;
+        }
         let addresses: Vec<SocketAddr> = match &hint.host {
             Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(*ip), hint.port)],
             Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(*ip), hint.port)],

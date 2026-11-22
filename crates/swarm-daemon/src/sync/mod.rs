@@ -502,6 +502,21 @@ struct Counts {
     peers: usize,
 }
 
+/// A result built from what the store holds, without touching the network.
+pub(crate) fn local_result(net: &Arc<NetState>, repo: RepoId, label: &str) -> Option<SyncResult> {
+    let store = net.store(repo);
+    let state = store.load_state().ok()?;
+    let resolved = store.resolve(&state);
+    Some(result(
+        label,
+        &store,
+        &resolved,
+        root_seq(&state, repo),
+        &state,
+        Counts::default(),
+    ))
+}
+
 fn result(
     state: &str,
     store: &RepoStore,

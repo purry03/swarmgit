@@ -3,6 +3,7 @@
 mod admin;
 mod bundle;
 mod maintainers;
+mod mirror;
 mod publish;
 mod recovery;
 
@@ -10,6 +11,7 @@ use admin::announce_routes;
 pub use admin::{fork, gc, list_repos, repo_info, set_seeding, status};
 pub use bundle::{export, import};
 pub use maintainers::{accept_ref, key_id_of, key_new, maintainers};
+pub use mirror::mirror_export;
 pub use publish::publish;
 pub use recovery::{recovery_set, rotate};
 
@@ -208,9 +210,17 @@ pub async fn sync(
     let net = state
         .net()
         .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
-    let outcome = crate::sync::sync_repo(net, repo, hints, progress)
-        .await
-        .map_err(net_error)?;
+    let mirrors = mirror::bases(&hints);
+    let outcome = match crate::sync::sync_repo(net, repo, hints, progress).await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            // MIR-2: peers first; mirrors only when no peer could help.
+            match from_mirrors(state, net, repo, &mirrors, progress).await {
+                Some(outcome) => outcome,
+                None => return Err(net_error(err)),
+            }
+        }
+    };
     let ref_list: serde_json::Map<String, Value> = outcome
         .ref_list
         .iter()
@@ -228,6 +238,37 @@ pub async fn sync(
         "accepted": outcome.accepted,
         "rejected": outcome.rejected,
     }))
+}
+
+/// Try each mirror in turn; the first bundle that imports wins.
+async fn from_mirrors(
+    state: &DaemonState,
+    net: &std::sync::Arc<crate::net::NetState>,
+    repo: RepoId,
+    bases: &[String],
+    progress: &Progress,
+) -> Option<crate::sync::SyncResult> {
+    for base in bases {
+        progress.say("mirror", format!("trying mirror {base}"));
+        let tmp = state
+            .home
+            .root()
+            .join(format!("mirror-{}.tmp", repo.to_base32()));
+        let got = mirror::download(base, repo, &tmp).await;
+        let imported = match got {
+            Ok(_) => bundle::import_file(state, &tmp).await.map_err(|e| e.msg),
+            Err(err) => Err(err),
+        };
+        let _ = std::fs::remove_file(&tmp);
+        match imported {
+            Ok(_) => {
+                progress.say("mirror", "imported from the mirror");
+                return crate::sync::local_result(net, repo, "mirror");
+            }
+            Err(err) => progress.say("mirror", format!("mirror failed: {err}")),
+        }
+    }
+    None
 }
 
 pub(crate) fn net_error(err: swarm_net::NetError) -> IpcError {

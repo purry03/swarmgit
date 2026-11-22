@@ -12,8 +12,8 @@ use swarm_store::{keyio, Home};
 
 mod repo;
 use repo::{
-    accept, export, gc, import, key_cmd, maintainers_cmd, recovery_cmd, resolve_repo, rotate_cmd,
-    unseed,
+    accept, export, gc, import, key_cmd, maintainers_cmd, mirror_export, recovery_cmd,
+    resolve_repo, rotate_cmd, unseed,
 };
 
 #[derive(Parser)]
@@ -21,6 +21,17 @@ use repo::{
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
+}
+
+#[derive(Subcommand)]
+enum MirrorCmd {
+    /// Write DIR/<repo-id>/repo.swarmbundle; serve DIR with any web server.
+    Export {
+        /// A repo ID or link.
+        link: String,
+        /// Directory to write into.
+        dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -90,6 +101,11 @@ enum Cmd {
         /// Print one JSON object on stdout.
         #[arg(long)]
         json: bool,
+    },
+    /// Publish a repo for static mirrors (plain file hosting).
+    Mirror {
+        #[command(subcommand)]
+        command: MirrorCmd,
     },
     /// Read a bundle file, making its repo available offline.
     Import {
@@ -664,6 +680,9 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Unseed { link, json } => unseed(&link, json).await,
         Cmd::Gc { link, json } => gc(&link, json).await,
         Cmd::Fork { link, json } => fork(&link, json).await,
+        Cmd::Mirror {
+            command: MirrorCmd::Export { link, dir },
+        } => mirror_export(&link, &dir).await,
         Cmd::Export { link, output, json } => export(&link, &output, json).await,
         Cmd::Import { file, json } => import(&file, json).await,
         Cmd::Key {

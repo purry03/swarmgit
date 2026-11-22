@@ -3,7 +3,7 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-PA=42721; PB=42722; PC=42723
+PA=42721; PB=42722; PC=42723; PD=42724; PW=42725
 WORK=$(mktemp -d)
 A=$WORK/a; B=$WORK/b; C=$WORK/c
 repo_of() { local l=${1#swarm://}; printf '%s' "${l%%[?&]*}"; }
@@ -55,4 +55,32 @@ cd "$WORK/src"; echo three >three; git add .; git commit -q -m three
 as $A $PA swarm seed "swarm://$REPO?h=tcp:127.0.0.1:$PB" >/dev/null 2>&1 || true
 if as $A $PA git push -q -f swarm main 2>"$WORK/err"; then swarm_fail "old root key still publishes"; fi
 grep -q unauthorized "$WORK/err" || swarm_fail "no unauthorized: $(cat "$WORK/err")"
+echo "== a static mirror alone is enough to clone"
+D=$WORK/d
+as $B $PB swarm mirror export "$REPO" "$WORK/www" >/dev/null
+[[ -s $WORK/www/$REPO/repo.swarmbundle ]] || swarm_fail "no mirror file"
+(cd "$WORK/www" && python3 -m http.server $PW --bind 127.0.0.1 >/dev/null 2>&1) &
+WEB=$!
+trap 'kill $WEB 2>/dev/null || true' EXIT
+sleep 1
+as $D $PD git clone -q "swarm://$REPO?h=http:127.0.0.1:$PW" d-out 2>"$WORK/err" || { cat "$WORK/err"; swarm_fail "clone from mirror failed"; }
+[[ $(git -C d-out rev-parse HEAD) == "$NEW_HEAD" ]] || swarm_fail "mirror clone has the wrong head"
+as $D $PD swarm status --json | jq -e --arg r "$NEW_ROOT" '.repos[0].root == $r' >/dev/null || swarm_fail "mirror clone did not follow the rotation"
+
+echo "== a tampered mirror is rejected"
+mkdir -p "$WORK/www2/$REPO"
+python3 - "$WORK/www/$REPO/repo.swarmbundle" "$WORK/www2/$REPO/repo.swarmbundle" <<'PY'
+import sys
+b = bytearray(open(sys.argv[1], 'rb').read())
+b[200] ^= 0xFF          # inside the first signed envelope
+open(sys.argv[2], 'wb').write(b)
+PY
+(cd "$WORK/www2" && python3 -m http.server $((PW+1)) --bind 127.0.0.1 >/dev/null 2>&1) &
+WEB2=$!
+trap 'kill $WEB $WEB2 2>/dev/null || true' EXIT
+sleep 1
+E=$WORK/e
+if as $E 42726 git clone -q "swarm://$REPO?h=http:127.0.0.1:$((PW+1))" e-out 2>"$WORK/err"; then
+    swarm_fail "a tampered mirror was accepted"
+fi
 echo PASS

@@ -319,3 +319,33 @@ pub(super) async fn rotate_cmd(repo: &str, recovery: &std::path::Path) -> i32 {
     })
     .await
 }
+
+pub(super) async fn mirror_export(link: &str, dir: &std::path::Path) -> i32 {
+    let (repo, _) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let dir = dir.to_path_buf();
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "mirror_export",
+                json!({ "repo": repo.to_base32(), "dir": absolute(&dir)? }),
+            )
+            .await?;
+        println!(
+            "{}",
+            result
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        );
+        Ok(0)
+    })
+    .await
+}

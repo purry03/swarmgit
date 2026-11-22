@@ -347,6 +347,51 @@ YAML. Unknown keys are reported and ignored.
 `$SWARM_HOME/daemon.json` records the actual port, PID and listen address. The
 daemon starts on demand and stops with `swarm daemon stop`.
 
+## 9a. Bundles, maintainers, mirrors and recovery
+
+**Bundles** carry a repo and its signed state in one file, for offline
+transfer. Nothing in the file is trusted: every manifest signature is checked
+and only signed manifests decide which refs exist.
+
+```bash
+swarm export swarm://<repo> -o repo.swarmbundle
+swarm import repo.swarmbundle
+```
+
+**Maintainers** each hold their own key. The root authorizes it for a set of
+ref globs; a publish outside those globs is rejected (`out_of_scope`).
+
+```bash
+swarm key new <repo>                      # on the maintainer's machine; prints its key ID
+swarm maintainers add <repo> <key-id> 'refs/heads/feature/**'   # on the root
+swarm maintainers list <repo>
+swarm accept <repo> <ref> <oid>           # settle a conflict locally
+```
+
+**Static mirrors** are plain web hosts. They only move bytes; everything is
+verified on import, so a tampered or stale mirror is rejected or ignored.
+
+```bash
+swarm mirror export swarm://<repo> ./www      # writes ./www/<repo-id>/repo.swarmbundle
+# serve ./www with any web server, then share:
+#   swarm://<repo>?h=https:mirror.example.org:443
+# or set  mirrors: [https://mirror.example.org]  in config.yaml
+```
+
+Mirrors are tried only when no peer could be reached. Refresh the file after
+each publish.
+
+**Recovery key.** A backup key that can move the root if the root key is lost
+or stolen. Keep the file offline.
+
+```bash
+swarm key recovery <repo> -o recovery.key     # on the root; names it in the repo
+swarm key rotate <repo> --recovery recovery.key   # later, on any machine holding the file
+```
+
+Rotation installs a new root key. Manifests from the old root are rejected
+afterwards. The repo ID never changes.
+
 ## 9. CLI summary
 
 ```text

@@ -70,6 +70,7 @@ async fn dispatch(
         "accept_ref" => repo::accept_ref(state, args).await,
         "recovery_set" => repo::recovery_set(state, args).await,
         "rotate" => repo::rotate(state, args).await,
+        "mirror_export" => repo::mirror_export(state, args).await,
         "export" => repo::export(state, args).await,
         "import" => repo::import(state, args).await,
         "gc" => repo::gc(state, args).await,
