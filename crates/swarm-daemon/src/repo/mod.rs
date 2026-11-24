@@ -256,7 +256,9 @@ async fn from_mirrors(
             .join(format!("mirror-{}.tmp", repo.to_base32()));
         let got = mirror::download(base, repo, &tmp).await;
         let imported = match got {
-            Ok(_) => bundle::import_file(state, &tmp).await.map_err(|e| e.msg),
+            Ok(_) => bundle::import_file(state, &tmp, Some(repo))
+                .await
+                .map_err(|e| e.msg),
             Err(err) => Err(err),
         };
         let _ = std::fs::remove_file(&tmp);

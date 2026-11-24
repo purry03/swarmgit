@@ -188,15 +188,26 @@ fn parse(path: &Path) -> Result<Parsed, IpcError> {
 /// `import`: read a bundle file (BUN-2).
 pub async fn import(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
     let path = PathBuf::from(arg_str(args, "path")?);
-    import_file(state, &path).await
+    import_file(state, &path, None).await
 }
 
 /// Import a bundle file: check every signature and the git data, then store
 /// the manifests and move the canonical refs. A rejected bundle leaves the
-/// store as it was.
-pub(crate) async fn import_file(state: &DaemonState, path: &Path) -> Result<Value, IpcError> {
+/// store as it was. `expect` names the repo the caller asked for (a mirror
+/// must not hand us a different repo's bundle).
+pub(crate) async fn import_file(
+    state: &DaemonState,
+    path: &Path,
+    expect: Option<RepoId>,
+) -> Result<Value, IpcError> {
     let parsed = parse(path)?;
     let repo = RepoId::from_bytes(parsed.envelopes[0].manifest.repo_id);
+    if expect.is_some_and(|want| want != repo) {
+        return Err(IpcError::new(
+            "wrong_repo",
+            "bundle is for a different repo than the one requested",
+        ));
+    }
     let store = RepoStore::new(state.home.clone(), repo);
     let lock = state.net().map(|net| net.sync_lock(repo));
     let _guard = match &lock {

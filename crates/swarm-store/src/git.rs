@@ -413,6 +413,7 @@ pub async fn fetch_oid_into_worktree(
             "fetch",
             "--quiet",
             "--no-tags",
+            "--no-write-fetch-head",
             &store,
             &oid,
         ])
@@ -463,6 +464,9 @@ pub async fn fetch_oids_inherited(
         "fetch",
         if progress { "--progress" } else { "--quiet" },
         "--no-tags",
+        // The user's own fetch owns FETCH_HEAD; an extra line there makes
+        // `git pull` see two branches to merge.
+        "--no-write-fetch-head",
         store.as_str(),
     ]);
     for oid in oids {

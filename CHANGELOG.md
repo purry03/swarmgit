@@ -2,6 +2,23 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## Unreleased
+
+### Added
+
+- `tests/e2e/swarm5.sh` with `compose.swarm5.yaml`: five containers (2 relays,
+  3 peers on isolated networks) covering clone/fetch/push, failover, bundles,
+  maintainers, mirrors, recovery and error cases (78 checks).
+
+### Fixed
+
+- `git pull` failed with "Cannot fast-forward to multiple branches" after new
+  commits arrived: the remote helper's internal fetch wrote an extra line to
+  the user's `FETCH_HEAD`. It now passes `--no-write-fetch-head`.
+- A static mirror serving a different repo's bundle at a repo's path was
+  imported (the clone came out empty). Mirror downloads must now match the
+  requested repo ID (`wrong_repo`).
+
 ## M6-M8 - bundles, maintainers, mirrors, recovery (2026-11-25)
 
 ### Added

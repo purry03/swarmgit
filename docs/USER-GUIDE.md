@@ -1,4 +1,4 @@
-# Swarmgit user guide
+# Swarmgit client guide
 
 Swarmgit is a peer-to-peer git remote. A repository has a `swarm://` link; any
 peer that can reach one holder of that link can clone it. There is no server to
@@ -235,7 +235,7 @@ repo:
 | Route | Source | Notes |
 | --- | --- | --- |
 | Hints | `h=tcp:host:port[@node]` in the link | Pinned when `@node` is present. |
-| Relay | `h=relay:host:port@node` in the link, or a relay address from peer exchange | For peers that cannot accept inbound connections. See "Relays" below. |
+| Relay | `h=relay:host:port@node` in the link, or a relay address from peer exchange | For peers that cannot accept inbound connections. See `RELAY-GUIDE.md`. |
 | Known peers | the `peers` table in `swarm.db` | Filled by earlier syncs, best first; keeps trust-on-first-use pins. |
 | LAN | UDP multicast on port 42099 | Same network segment only. |
 | DHT | Mainline DHT lookup | Works with no hint at all; needs outbound UDP. |
@@ -263,38 +263,11 @@ listen port (one-hour lease, renewed every 30 minutes). Without UPnP, set
 outbound dials. A node takes an external IP as its own only after two
 different peers report it.
 
-**Relays.** A node behind NAT, CGNAT or mobile data cannot be dialed, and two
-such nodes cannot reach each other at all. A relay is a small public server
-that both sides connect out to; it joins the two connections and copies bytes.
-The swarm handshake still runs end to end through it, so the relay sees only
-ciphertext, and the dialer checks the node ID it asked for: a malicious relay
-can only break the connection, not impersonate a peer.
-
-*Run a relay* on any machine with a reachable TCP port (default 42425):
-
-```bash
-swarm-relay --listen 0.0.0.0:42425 --name relay.example.org:42425
-```
-
-`--name` is the exact `host:port` clients use to reach it (repeat it for
-several names). Limits: `--max-listeners`, `--max-splices`, `--idle-secs`.
-
-*Use a relay* by adding it to the seeder's config file:
-
-```yaml
-relays:
-  - relay.example.org:42425
-```
-
-Put this in `/etc/swarmgit/config.yaml` for a system-wide setting, or
-`~/.config/swarmgit/config.yaml` for one user. `SWARM_RELAYS` is also supported
-as an environment-variable override. The seeder registers with the relay and then adds
-`h=relay:relay.example.org:42425@<node>` to its `swarm link` output and to
-the link printed by `swarm init`. Anyone cloning with that link reaches it
-through the relay when the direct address does not work. `swarm status` shows
-`relay <name> registered` or the error while it is not. When a direct address
-for the same node is also being tried, the relay dial waits 1.5 seconds so a
-working direct path wins. A relay only splices to a node ID the dialer names.
+**Relays.** A relay helps two peers connect when restrictive NAT or firewalls
+prevent direct inbound connections. The regular encrypted peer session runs
+through it, but the relay sees connection metadata. Client-side configuration
+and cloning notes are in the Configuration section; for server installation,
+capacity, security, and operations, see [the relay guide](RELAY-GUIDE.md).
 
 **Storage.** `swarm gc <repo>` repacks a repo's object store. It keeps every
 object reachable from a stored manifest, and fails with `busy` while a sync or
@@ -429,7 +402,7 @@ Inside the compose network use `a`/`b`, not `127.0.0.1`.
 
 **Two machines on different networks (home Wi-Fi and mobile data, CGNAT)
 cannot clone from each other** — neither can accept inbound connections, so
-use a relay (section 7): run `swarm-relay` on a public host, set
+use a relay: run `swarm-relay` on a public host, set
 `relays` in the seeder's `/etc/swarmgit/config.yaml` (or set `SWARM_RELAYS`),
 then clone with the link that `swarm link` prints afterwards (it contains the
 `h=relay:` hint). Check
