@@ -10,3 +10,12 @@
 # Local logs and editor files
 *.log
 .DS_Store
+
+# Personal notes and local Docker dev/test setup (kept in ../swarmgit-personal)
+/DECISIONS.md
+/improvements.md
+/Swarmgit Agent-Buildable Spec*.md
+/docs/RELAY-DESIGN.md
+/Dockerfile*
+/compose*.yaml
+/.dockerignore

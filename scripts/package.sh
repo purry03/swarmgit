@@ -350,7 +350,7 @@ Name:           swarm-relay
 Version:        $RPM_VERSION
 Release:        $RELEASE
 Summary:        Relay server for swarmgit peers behind NAT
-License:        MIT OR Apache-2.0
+License:        GPL-3.0-or-later
 Requires(pre):  shadow-utils
 
 %description
@@ -457,7 +457,7 @@ Name:           swarmgit
 Version:        $RPM_VERSION
 Release:        $RELEASE
 Summary:        Peer-to-peer git over an encrypted, post-quantum transport
-License:        MIT OR Apache-2.0
+License:        GPL-3.0-or-later
 Requires:       git
 Requires:       ca-certificates
 

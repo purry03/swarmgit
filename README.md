@@ -1,4 +1,8 @@
-# Swarmgit
+<p align="center">
+  <img src="assets/logo.svg" alt="Swarmgit" width="160">
+</p>
+
+<h1 align="center">Swarmgit</h1>
 
 Peer-to-peer git over an encrypted, post-quantum transport. A repository is
 identified by a `swarm://` link; any peer that can reach a holder of that link
@@ -93,3 +97,7 @@ archives are not Apple-signed or notarized; a downloaded binary may need
 - `crates/swarm-daemon` - IPC daemon, peer listener, sync, publish.
 - `crates/swarm-cli` - the `swarm` binary and `git-remote-swarm` helper.
 - `crates/swarm-testpeer` - hostile peer fixtures for the acceptance tests.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).
