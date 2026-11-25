@@ -1,0 +1,1010 @@
+#compdef swarm
+
+autoload -U is-at-least
+
+_swarm() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_swarm_commands" \
+"*::: :->swarm" \
+&& ret=0
+    case $state in
+    (swarm)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-command-$line[1]:"
+        case $line[1] in
+            (init)
+_arguments "${_arguments_options[@]}" : \
+'--object-format=[Object format for a newly created git repo]:FORMAT:_default' \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::repo:_default' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::repo:_default' \
+&& ret=0
+;;
+(seed)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- A `swarm\://` link, optionally with hints:_default' \
+&& ret=0
+;;
+(unseed)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- A repo ID or link:_default' \
+&& ret=0
+;;
+(gc)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- A repo ID or link:_default' \
+&& ret=0
+;;
+(fork)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- The source link, optionally with hints:_default' \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Bundle file to write]:FILE:_files' \
+'--output=[Bundle file to write]:FILE:_files' \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- A repo ID or link:_default' \
+&& ret=0
+;;
+(mirror)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_swarm__subcmd__mirror_commands" \
+"*::: :->mirror" \
+&& ret=0
+
+    case $state in
+    (mirror)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-mirror-command-$line[1]:"
+        case $line[1] in
+            (export)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- A repo ID or link:_default' \
+':dir -- Directory to write into:_files' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__mirror__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-mirror-help-command-$line[1]:"
+        case $line[1] in
+            (export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':file -- Bundle file to read:_files' \
+&& ret=0
+;;
+(maintainers)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_swarm__subcmd__maintainers_commands" \
+"*::: :->maintainers" \
+&& ret=0
+
+    case $state in
+    (maintainers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-maintainers-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+':key -- The maintainer'\''s key ID, from `swarm key new` or `swarm key id`:_default' \
+'*::globs -- Ref globs the key may publish (default refs/heads/*):_default' \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+':key:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__maintainers__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-maintainers-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(accept)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo -- A repo ID or link:_default' \
+':refname -- The ref in conflict, for example refs/heads/main:_default' \
+':signer -- The signer (key ID, hex or base32) whose value to take:_default' \
+&& ret=0
+;;
+(key)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_swarm__subcmd__key_commands" \
+"*::: :->key" \
+&& ret=0
+
+    case $state in
+    (key)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-key-command-$line[1]:"
+        case $line[1] in
+            (recovery)
+_arguments "${_arguments_options[@]}" : \
+'-o+[]:FILE:_files' \
+'--output=[]:FILE:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+&& ret=0
+;;
+(rotate)
+_arguments "${_arguments_options[@]}" : \
+'--recovery=[]:FILE:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+&& ret=0
+;;
+(new)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+&& ret=0
+;;
+(id)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+&& ret=0
+;;
+(backup)
+_arguments "${_arguments_options[@]}" : \
+'-o+[]:FILE:_files' \
+'--output=[]:FILE:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__key__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-key-help-command-$line[1]:"
+        case $line[1] in
+            (recovery)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rotate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(new)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(id)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(backup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell -- The shell to generate for:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+'--foreground[Stay in the foreground]' \
+'--detach[Run as an already-detached process (used by autostart)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_swarm__subcmd__daemon_commands" \
+"*::: :->daemon" \
+&& ret=0
+
+    case $state in
+    (daemon)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-daemon-command-$line[1]:"
+        case $line[1] in
+            (stop)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__daemon__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-daemon-help-command-$line[1]:"
+        case $line[1] in
+            (stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-command-$line[1]:"
+        case $line[1] in
+            (init)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(link)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(seed)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unseed)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(gc)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fork)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mirror)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help__subcmd__mirror_commands" \
+"*::: :->mirror" \
+&& ret=0
+
+    case $state in
+    (mirror)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-mirror-command-$line[1]:"
+        case $line[1] in
+            (export)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(maintainers)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help__subcmd__maintainers_commands" \
+"*::: :->maintainers" \
+&& ret=0
+
+    case $state in
+    (maintainers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-maintainers-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(accept)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(key)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help__subcmd__key_commands" \
+"*::: :->key" \
+&& ret=0
+
+    case $state in
+    (key)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-key-command-$line[1]:"
+        case $line[1] in
+            (recovery)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rotate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(new)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(id)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(backup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help__subcmd__daemon_commands" \
+"*::: :->daemon" \
+&& ret=0
+
+    case $state in
+    (daemon)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-daemon-command-$line[1]:"
+        case $line[1] in
+            (stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_swarm_commands] )) ||
+_swarm_commands() {
+    local commands; commands=(
+'init:Create a repo key and publish the first manifest' \
+'link:Print the link for a repo' \
+'status:Show repos, sequence numbers and conflicts' \
+'seed:Sync a repo and keep serving it' \
+'unseed:Stop serving a repo but keep its store' \
+'gc:Repack a repo'\''s store and drop unreachable objects, when idle (ST-7)' \
+'fork:Create an independent repo from another one' \
+'export:Write a repo and its signed state to a bundle file for offline transfer' \
+'mirror:Publish a repo for static mirrors (plain file hosting)' \
+'import:Read a bundle file, making its repo available offline' \
+'maintainers:Add or remove maintainers, who may publish without the root key' \
+'accept:Settle a ref conflict here by taking one signer'\''s value' \
+'key:Key management' \
+'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
+'daemon:Run, start or stop the daemon' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__accept_commands] )) ||
+_swarm__subcmd__accept_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm accept commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__completions_commands] )) ||
+_swarm__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm completions commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon_commands] )) ||
+_swarm__subcmd__daemon_commands() {
+    local commands; commands=(
+'stop:Stop the running daemon' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm daemon commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon__subcmd__help_commands] )) ||
+_swarm__subcmd__daemon__subcmd__help_commands() {
+    local commands; commands=(
+'stop:Stop the running daemon' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm daemon help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__daemon__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon__subcmd__help__subcmd__stop_commands] )) ||
+_swarm__subcmd__daemon__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon help stop commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon__subcmd__stop_commands] )) ||
+_swarm__subcmd__daemon__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon stop commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__export_commands] )) ||
+_swarm__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm export commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__fork_commands] )) ||
+_swarm__subcmd__fork_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm fork commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__gc_commands] )) ||
+_swarm__subcmd__gc_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm gc commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help_commands] )) ||
+_swarm__subcmd__help_commands() {
+    local commands; commands=(
+'init:Create a repo key and publish the first manifest' \
+'link:Print the link for a repo' \
+'status:Show repos, sequence numbers and conflicts' \
+'seed:Sync a repo and keep serving it' \
+'unseed:Stop serving a repo but keep its store' \
+'gc:Repack a repo'\''s store and drop unreachable objects, when idle (ST-7)' \
+'fork:Create an independent repo from another one' \
+'export:Write a repo and its signed state to a bundle file for offline transfer' \
+'mirror:Publish a repo for static mirrors (plain file hosting)' \
+'import:Read a bundle file, making its repo available offline' \
+'maintainers:Add or remove maintainers, who may publish without the root key' \
+'accept:Settle a ref conflict here by taking one signer'\''s value' \
+'key:Key management' \
+'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
+'daemon:Run, start or stop the daemon' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__accept_commands] )) ||
+_swarm__subcmd__help__subcmd__accept_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help accept commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__completions_commands] )) ||
+_swarm__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help completions commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__daemon_commands] )) ||
+_swarm__subcmd__help__subcmd__daemon_commands() {
+    local commands; commands=(
+'stop:Stop the running daemon' \
+    )
+    _describe -t commands 'swarm help daemon commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__daemon__subcmd__stop_commands] )) ||
+_swarm__subcmd__help__subcmd__daemon__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help daemon stop commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__export_commands] )) ||
+_swarm__subcmd__help__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help export commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__fork_commands] )) ||
+_swarm__subcmd__help__subcmd__fork_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help fork commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__gc_commands] )) ||
+_swarm__subcmd__help__subcmd__gc_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help gc commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__import_commands] )) ||
+_swarm__subcmd__help__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help import commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__init_commands] )) ||
+_swarm__subcmd__help__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help init commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__key_commands] )) ||
+_swarm__subcmd__help__subcmd__key_commands() {
+    local commands; commands=(
+'recovery:Create a recovery key, name it in the repo, and save it to FILE (keep it offline)' \
+'rotate:Move the root to a new key, authorized by the recovery key file' \
+'new:Create this machine'\''s own key for a repo, to be authorized by the root' \
+'id:Print the key ID of this machine'\''s key for a repo' \
+'backup:Copy a repo signing key to FILE with mode 0600' \
+    )
+    _describe -t commands 'swarm help key commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__key__subcmd__backup_commands] )) ||
+_swarm__subcmd__help__subcmd__key__subcmd__backup_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help key backup commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__key__subcmd__id_commands] )) ||
+_swarm__subcmd__help__subcmd__key__subcmd__id_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help key id commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__key__subcmd__new_commands] )) ||
+_swarm__subcmd__help__subcmd__key__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help key new commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__key__subcmd__recovery_commands] )) ||
+_swarm__subcmd__help__subcmd__key__subcmd__recovery_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help key recovery commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__key__subcmd__rotate_commands] )) ||
+_swarm__subcmd__help__subcmd__key__subcmd__rotate_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help key rotate commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__link_commands] )) ||
+_swarm__subcmd__help__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help link commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__maintainers_commands] )) ||
+_swarm__subcmd__help__subcmd__maintainers_commands() {
+    local commands; commands=(
+'add:Authorize a key (root key only), optionally limited to ref globs' \
+'remove:Remove a maintainer (root key only)' \
+'list:List the maintainers' \
+    )
+    _describe -t commands 'swarm help maintainers commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__maintainers__subcmd__add_commands] )) ||
+_swarm__subcmd__help__subcmd__maintainers__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help maintainers add commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__maintainers__subcmd__list_commands] )) ||
+_swarm__subcmd__help__subcmd__maintainers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help maintainers list commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__maintainers__subcmd__remove_commands] )) ||
+_swarm__subcmd__help__subcmd__maintainers__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help maintainers remove commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mirror_commands] )) ||
+_swarm__subcmd__help__subcmd__mirror_commands() {
+    local commands; commands=(
+'export:Write DIR/<repo-id>/repo.swarmbundle; serve DIR with any web server' \
+    )
+    _describe -t commands 'swarm help mirror commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mirror__subcmd__export_commands] )) ||
+_swarm__subcmd__help__subcmd__mirror__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mirror export commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__seed_commands] )) ||
+_swarm__subcmd__help__subcmd__seed_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help seed commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__status_commands] )) ||
+_swarm__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help status commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__unseed_commands] )) ||
+_swarm__subcmd__help__subcmd__unseed_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help unseed commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__import_commands] )) ||
+_swarm__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm import commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__init_commands] )) ||
+_swarm__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm init commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key_commands] )) ||
+_swarm__subcmd__key_commands() {
+    local commands; commands=(
+'recovery:Create a recovery key, name it in the repo, and save it to FILE (keep it offline)' \
+'rotate:Move the root to a new key, authorized by the recovery key file' \
+'new:Create this machine'\''s own key for a repo, to be authorized by the root' \
+'id:Print the key ID of this machine'\''s key for a repo' \
+'backup:Copy a repo signing key to FILE with mode 0600' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm key commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__backup_commands] )) ||
+_swarm__subcmd__key__subcmd__backup_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key backup commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help_commands] )) ||
+_swarm__subcmd__key__subcmd__help_commands() {
+    local commands; commands=(
+'recovery:Create a recovery key, name it in the repo, and save it to FILE (keep it offline)' \
+'rotate:Move the root to a new key, authorized by the recovery key file' \
+'new:Create this machine'\''s own key for a repo, to be authorized by the root' \
+'id:Print the key ID of this machine'\''s key for a repo' \
+'backup:Copy a repo signing key to FILE with mode 0600' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm key help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help__subcmd__backup_commands] )) ||
+_swarm__subcmd__key__subcmd__help__subcmd__backup_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key help backup commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__key__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help__subcmd__id_commands] )) ||
+_swarm__subcmd__key__subcmd__help__subcmd__id_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key help id commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help__subcmd__new_commands] )) ||
+_swarm__subcmd__key__subcmd__help__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key help new commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help__subcmd__recovery_commands] )) ||
+_swarm__subcmd__key__subcmd__help__subcmd__recovery_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key help recovery commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__help__subcmd__rotate_commands] )) ||
+_swarm__subcmd__key__subcmd__help__subcmd__rotate_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key help rotate commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__id_commands] )) ||
+_swarm__subcmd__key__subcmd__id_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key id commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__new_commands] )) ||
+_swarm__subcmd__key__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key new commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__recovery_commands] )) ||
+_swarm__subcmd__key__subcmd__recovery_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key recovery commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__key__subcmd__rotate_commands] )) ||
+_swarm__subcmd__key__subcmd__rotate_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm key rotate commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__link_commands] )) ||
+_swarm__subcmd__link_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm link commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers_commands] )) ||
+_swarm__subcmd__maintainers_commands() {
+    local commands; commands=(
+'add:Authorize a key (root key only), optionally limited to ref globs' \
+'remove:Remove a maintainer (root key only)' \
+'list:List the maintainers' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm maintainers commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__add_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers add commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__help_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__help_commands() {
+    local commands; commands=(
+'add:Authorize a key (root key only), optionally limited to ref globs' \
+'remove:Remove a maintainer (root key only)' \
+'list:List the maintainers' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm maintainers help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__help__subcmd__add_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers help add commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__help__subcmd__list_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers help list commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__help__subcmd__remove_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__help__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers help remove commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__list_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers list commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__maintainers__subcmd__remove_commands] )) ||
+_swarm__subcmd__maintainers__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm maintainers remove commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mirror_commands] )) ||
+_swarm__subcmd__mirror_commands() {
+    local commands; commands=(
+'export:Write DIR/<repo-id>/repo.swarmbundle; serve DIR with any web server' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm mirror commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mirror__subcmd__export_commands] )) ||
+_swarm__subcmd__mirror__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mirror export commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mirror__subcmd__help_commands] )) ||
+_swarm__subcmd__mirror__subcmd__help_commands() {
+    local commands; commands=(
+'export:Write DIR/<repo-id>/repo.swarmbundle; serve DIR with any web server' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm mirror help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mirror__subcmd__help__subcmd__export_commands] )) ||
+_swarm__subcmd__mirror__subcmd__help__subcmd__export_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mirror help export commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mirror__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__mirror__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mirror help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__seed_commands] )) ||
+_swarm__subcmd__seed_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm seed commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status_commands] )) ||
+_swarm__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__unseed_commands] )) ||
+_swarm__subcmd__unseed_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm unseed commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_swarm" ]; then
+    _swarm "$@"
+else
+    compdef _swarm swarm
+fi

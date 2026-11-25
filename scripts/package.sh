@@ -403,6 +403,9 @@ EOF
         for doc in README.md CHANGELOG.md; do
             [[ -f $doc ]] && install -m 0644 "$doc" "$stage/usr/share/doc/swarmgit/$doc"
         done
+        install -Dm 0644 completions/swarm.bash "$stage/usr/share/bash-completion/completions/swarm"
+        install -Dm 0644 completions/_swarm "$stage/usr/share/zsh/vendor-completions/_swarm"
+        install -Dm 0644 completions/swarm.fish "$stage/usr/share/fish/vendor_completions.d/swarm.fish"
         mkdir -p "$stage/etc/swarmgit"
         install -m 0644 docs/config.example.yaml "$stage/etc/swarmgit/config.yaml"
         echo /etc/swarmgit/config.yaml >"$stage/DEBIAN/conffiles"
@@ -440,6 +443,7 @@ EOF
         install -m 0755 "$BIN" "$src/swarm"
         [[ -f README.md ]] && install -m 0644 README.md "$src/README.md"
         install -m 0644 docs/config.example.yaml "$src/config.yaml"
+        cp completions/swarm.bash completions/_swarm completions/swarm.fish "$src/"
 
         cat >"$spec" <<EOF
 # Strip/BRP hooks and automatic dependency generation assume a full Fedora
@@ -467,6 +471,9 @@ helper.
 install -Dpm 0755 $src/swarm %{buildroot}%{_bindir}/swarm
 ln -sfn swarm %{buildroot}%{_bindir}/git-remote-swarm
 install -Dpm 0644 $src/config.yaml %{buildroot}/etc/swarmgit/config.yaml
+install -Dpm 0644 $src/swarm.bash %{buildroot}/usr/share/bash-completion/completions/swarm
+install -Dpm 0644 $src/_swarm %{buildroot}/usr/share/zsh/site-functions/_swarm
+install -Dpm 0644 $src/swarm.fish %{buildroot}/usr/share/fish/vendor_completions.d/swarm.fish
 EOF
         if [[ -f $src/README.md ]]; then
             cat >>"$spec" <<EOF
@@ -479,6 +486,9 @@ EOF
 %{_bindir}/swarm
 %{_bindir}/git-remote-swarm
 %config(noreplace) /etc/swarmgit/config.yaml
+/usr/share/bash-completion/completions/swarm
+/usr/share/zsh/site-functions/_swarm
+/usr/share/fish/vendor_completions.d/swarm.fish
 EOF
         [[ -f $src/README.md ]] && echo '%{_docdir}/swarmgit/README.md' >>"$spec"
 

@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use serde_json::{json, Value};
 use swarm_core::ids::{Link, RepoId};
 use swarm_daemon::client::ClientError;
@@ -133,6 +134,11 @@ enum Cmd {
     Key {
         #[command(subcommand)]
         command: KeyCmd,
+    },
+    /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
+    Completions {
+        /// The shell to generate for.
+        shell: Shell,
     },
     /// Run, start or stop the daemon.
     Daemon {
@@ -660,6 +666,14 @@ async fn daemon(foreground: bool, detach: bool, action: Option<DaemonCmd>) -> i3
     }
 }
 
+/// The completion script for `shell`, as shipped in `completions/`.
+#[must_use]
+pub fn completions(shell: Shell) -> String {
+    let mut out = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "swarm", &mut out);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Parse arguments and run one CLI command.
 pub async fn run(args: Vec<String>) -> i32 {
     let cli = match Cli::try_parse_from(args) {
@@ -674,6 +688,10 @@ pub async fn run(args: Vec<String>) -> i32 {
             object_format,
             json,
         } => init(object_format, json).await,
+        Cmd::Completions { shell } => {
+            print!("{}", completions(shell));
+            0
+        }
         Cmd::Link { json, repo } => link(repo, json).await,
         Cmd::Status { json, repo } => status(json, repo).await,
         Cmd::Seed { link, json } => seed(&link, json).await,
@@ -719,5 +737,28 @@ pub async fn run(args: Vec<String>) -> i32 {
             detach,
             action,
         } => daemon(foreground, detach, action).await,
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    /// `completions/` holds the scripts the packages install; regenerate them
+    /// with `scripts/gen-completions.sh` when the command line changes.
+    #[test]
+    fn shipped_completions_are_current() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../completions");
+        for (file, shell) in [
+            ("swarm.bash", Shell::Bash),
+            ("_swarm", Shell::Zsh),
+            ("swarm.fish", Shell::Fish),
+        ] {
+            let have = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+            assert!(
+                have == completions(shell),
+                "completions/{file} is stale: run scripts/gen-completions.sh"
+            );
+        }
     }
 }
