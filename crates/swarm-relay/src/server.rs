@@ -17,7 +17,7 @@ use crate::proto::{Msg, Role, VERSION};
 use crate::quota::{address_key, Quotas};
 use crate::secure::{Channel, Receiver, RelayKey, Sender};
 use crate::topics::Topics;
-use crate::RelayError;
+use crate::{RelayError, FULL};
 
 struct Entry {
     gen: u64,
@@ -59,7 +59,12 @@ pub(crate) struct State {
     pub(crate) network: OnceLock<Arc<Directory>>,
     /// Recent dial-back checks by caller address.
     pub(crate) dial_backs: Mutex<HashMap<IpAddr, Instant>>,
+    /// When "relay is full" was last logged.
+    said_full: Mutex<Option<Instant>>,
 }
+
+/// Least time between "relay is full" log lines.
+const FULL_LOG_EVERY: Duration = Duration::from_secs(60);
 
 /// A relay. Cheap to clone.
 #[derive(Clone)]
@@ -122,6 +127,7 @@ impl Relay {
                 topics: Topics::default(),
                 network: OnceLock::new(),
                 dial_backs: Mutex::new(HashMap::new()),
+                said_full: Mutex::default(),
             }),
         }
     }
@@ -290,6 +296,18 @@ impl Relay {
         }
     }
 
+    /// Tell the operator the relay is full, at most once a minute.
+    fn note_full(&self, what: &str, max: usize) {
+        let Ok(mut said) = self.state.said_full.lock() else {
+            return;
+        };
+        if said.is_some_and(|at| at.elapsed() < FULL_LOG_EVERY) {
+            return;
+        }
+        *said = Some(Instant::now());
+        tracing::warn!("relay is full: {max} {what}; refusing new ones");
+    }
+
     /// The address `peer` is counted under, unless it is spared.
     pub(crate) fn counted(&self, peer: SocketAddr) -> Option<IpAddr> {
         let spared =
@@ -313,7 +331,7 @@ impl Relay {
 
         let gen = self.state.next_gen.fetch_add(1, Ordering::SeqCst);
         let (tx, mut incoming) = mpsc::channel::<[u8; 16]>(16);
-        let admitted = {
+        let refused = {
             let mut listeners = self
                 .state
                 .listeners
@@ -324,18 +342,25 @@ impl Relay {
                 let held = listeners.values().filter(|entry| entry.ip == ip).count();
                 held >= limits.listeners_per_ip
             });
-            if new && (listeners.len() >= limits.max_listeners || crowded) {
-                false
+            let full = new && listeners.len() >= limits.max_listeners;
+            if full || (new && crowded) {
+                Some(full)
             } else {
                 // REL-2: a newer control connection replaces the older one.
                 // The old entry's sender drops here, ending its control loop.
                 let ip = address_key(peer.ip());
                 listeners.insert(node, Entry { gen, ip, tx });
-                true
+                None
             }
         };
-        if !admitted {
-            send_error(&mut stream, "limit_exceeded", "too many listeners").await;
+        if let Some(full) = refused {
+            let reason = if full {
+                self.note_full("registered listeners", limits.max_listeners);
+                FULL
+            } else {
+                "too many listeners"
+            };
+            send_error(&mut stream, "limit_exceeded", reason).await;
             return Err(RelayError::Protocol("listener limit".into()));
         }
         let result = self
@@ -443,7 +468,8 @@ impl Relay {
             return Err(RelayError::Protocol("daily quota".into()));
         }
         if self.state.splices.load(Ordering::SeqCst) >= limits.max_splices {
-            send_error(&mut stream, "limit_exceeded", "relay is full").await;
+            self.note_full("relayed sessions", limits.max_splices);
+            send_error(&mut stream, "limit_exceeded", FULL).await;
             return Err(RelayError::Protocol("splice limit".into()));
         }
         let tx = self
@@ -478,7 +504,8 @@ impl Relay {
             }
         };
         if !queued {
-            send_error(&mut stream, "limit_exceeded", "too many pending").await;
+            self.note_full("waiting connects", limits.max_pending);
+            send_error(&mut stream, "limit_exceeded", FULL).await;
             return Err(RelayError::Protocol("pending limit".into()));
         }
         if tx.try_send(token).is_err() {

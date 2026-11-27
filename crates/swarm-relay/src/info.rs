@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::proto::{Msg, MAX_REFERRALS, MAX_RELAYS_REPLY, VERSION};
 use crate::secure::{Channel, CAP_NK};
-use crate::server::Relay;
+use crate::server::{send_error, Relay};
 use crate::{client, RelayError};
 use crate::{is_domain_name, name};
 
@@ -28,6 +28,14 @@ impl Relay {
         let request = tokio::time::timeout(wait, stream.recv())
             .await
             .map_err(|_| RelayError::Timeout("info"))??;
+        // Refused after reading the request, so the caller sees the reason.
+        let max = self.state.config.limits.requests_per_minute;
+        if let Some(ip) = self.counted(peer) {
+            if !self.state.quotas.request(ip, max) {
+                send_error(&mut stream, "limit_exceeded", "too many requests").await;
+                return Err(RelayError::Protocol("request rate".into()));
+            }
+        }
         let reply = match request {
             Msg::Info => self.describe(peer),
             Msg::GetRelays { max } => {

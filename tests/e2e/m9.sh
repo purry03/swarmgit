@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M9 acceptance from spec 11.10: SOCKS5 with nothing leaving around the proxy,
 # onion hints and hidden-service hosting, shaped handshakes, the ban list and
-# limits, and experimental UDP hole punching. tests/e2e/faketor.py stands in
+# limits, and UDP hole punching. tests/e2e/faketor.py stands in
 # for Tor; nothing touches the real network.
 #
 # The proxy-leak and ban tests need root (network namespaces, iptables). In the
@@ -106,7 +106,7 @@ wait_for "the relay" listening 127.0.0.1 "$PRELAY"
 HOMES+=("$A")
 seeder() {
     as "$A" $PA env SWARM_ONION_CONTROL=127.0.0.1:$CONTROL SWARM_ONION_MAX_CONNECTIONS=1 \
-        SWARM_RELAYS="127.0.0.1:$PRELAY" SWARM_RELAY_MODE=always SWARM_EXPERIMENTAL_UDP=1 \
+        SWARM_RELAYS="127.0.0.1:$PRELAY" SWARM_RELAY_MODE=always \
         SWARM_LOG=debug "$@"
 }
 mkdir "$WORK/src"
@@ -238,12 +238,12 @@ if [[ $ROOT_TESTS == 1 ]]; then
     PIDS+=($!)
     wait_for "the onion relay" grep -q 'relay address:' "$WORK/onion-relay.log"
     PINNED=$(awk '/relay address:/ { print $NF; exit }' "$WORK/onion-relay.log")
-    # SWARM_EXPERIMENTAL_UDP is asked for and must stay off behind a proxy.
+    # UDP punching is on by default and must stay off behind a proxy.
     torified() { # torified HOME cmd...
         local home=$1
         shift
         proxied "$home" env SWARM_RELAYS="$PINNED" SWARM_RELAY_PASSWORD='correct horse' \
-            SWARM_EXPERIMENTAL_UDP=1 "$@"
+            "$@"
     }
     OS=$WORK/onion-seed
     mkdir "$WORK/onion-src"
@@ -293,18 +293,18 @@ clone "$WORK/o2" $PC "h=tcp:127.0.0.1:$PB" plain-out
 stop "$WORK/o2"
 stop "$WORK/o1"
 
-echo "== two relayed peers punch a UDP path (experimental)"
+echo "== two relayed peers punch a UDP path by default"
 U=$WORK/u
 HOMES+=("$U")
-as "$U" $PD env SWARM_LOG=info swarm daemon start --experimental-udp
+as "$U" $PD env SWARM_LOG=info swarm daemon start
 clone "$U" $PD "$RELAY" udp-out
 grep -q 'udp path established' "$U/daemon.log" || { cat "$U/daemon.log"; swarm_fail "no udp path"; }
 stop "$U"
 
-echo "== without the flag the relayed session is used as it is"
+echo "== with udp off the relayed session is used as it is"
 V=$WORK/v
-clone "$V" $PE "$RELAY" relay-out SWARM_LOG=info
-if grep -q 'udp path established' "$V/daemon.log"; then swarm_fail "punched without the flag"; fi
+clone "$V" $PE "$RELAY" relay-out SWARM_LOG=info SWARM_NO_UDP=1
+if grep -q 'udp path established' "$V/daemon.log"; then swarm_fail "punched with udp off"; fi
 stop "$V"
 
 if [[ $ROOT_TESTS == 1 ]]; then

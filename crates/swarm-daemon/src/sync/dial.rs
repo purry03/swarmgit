@@ -98,6 +98,8 @@ pub struct Failures {
     pub unreachable: usize,
     /// Addresses dialed through a relay (included in `tried`).
     pub relay_tried: usize,
+    /// A relay on the way to a peer was at capacity.
+    pub relay_full: bool,
 }
 
 impl Failures {
@@ -331,6 +333,13 @@ impl Dialer {
                     net.peer_fail(repo, &addr);
                     self.failures.auth |= matches!(err, NetError::AuthFailed(_));
                     self.failures.no_shared |= matches!(err, NetError::NoSharedRepo);
+                    if matches!(&err, NetError::Relay(why) if why == swarm_relay::FULL) {
+                        // Said once, even without -v.
+                        if !self.failures.relay_full {
+                            self.progress.say("relay", format!("{addr}: relay is full"));
+                        }
+                        self.failures.relay_full = true;
+                    }
                     match &err {
                         NetError::Timeout(_) => self.failures.timed_out += 1,
                         NetError::Io(_) => self.failures.unreachable += 1,
@@ -355,6 +364,9 @@ impl Dialer {
 }
 
 fn relay_error(err: RelayError) -> NetError {
+    if err.is_full() {
+        return NetError::Relay(swarm_relay::FULL.into());
+    }
     match err {
         RelayError::Timeout(what) => NetError::Timeout(format!("relay: {what}")),
         RelayError::Io(io) => NetError::Io(io),

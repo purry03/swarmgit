@@ -27,6 +27,8 @@ pub struct Limits {
     pub splices_per_ip: usize,
     /// Most `Connect` attempts from one address in a minute.
     pub connects_per_minute: usize,
+    /// Most info and lookup requests from one address in a minute.
+    pub requests_per_minute: usize,
     /// Rate of one splice, both directions together. 0 means no limit.
     pub splice_bytes_per_second: u64,
     /// Most bytes carried to and from one node in a day.
@@ -48,6 +50,7 @@ impl Default for Limits {
             listeners_per_ip: 2,
             splices_per_ip: 8,
             connects_per_minute: 20,
+            requests_per_minute: 120,
             splice_bytes_per_second: 8 * 1024 * 1024,
             node_daily_bytes: 10 * 1024 * 1024 * 1024,
             limit_loopback: false,

@@ -112,6 +112,8 @@ pub struct Config {
     dht_port: Option<Many>,
     /// UPnP port mapping on or off (`SWARM_NO_UPNP`).
     upnp: Option<Many>,
+    /// UDP hole punching on or off (`SWARM_NO_UDP`).
+    udp: Option<Many>,
     /// Seconds a first clone waits for LAN answers (`SWARM_FIND_TIMEOUT`).
     find_timeout: Option<Many>,
     /// Largest pack in bytes (`SWARM_MAX_PACK_BYTES`).
@@ -130,8 +132,6 @@ pub struct Config {
     onion_control: Option<Many>,
     /// Tor control password (`SWARM_ONION_PASSWORD`).
     onion_password: Option<Many>,
-    /// Experimental UDP hole punching (`SWARM_EXPERIMENTAL_UDP`).
-    experimental_udp: Option<Many>,
     /// Connections open at once through the hidden service
     /// (`SWARM_ONION_MAX_CONNECTIONS`).
     onion_max_connections: Option<Many>,
@@ -225,7 +225,6 @@ impl Config {
             ("SWARM_OBFS", &self.obfs),
             ("SWARM_ONION_CONTROL", &self.onion_control),
             ("SWARM_ONION_PASSWORD", &self.onion_password),
-            ("SWARM_EXPERIMENTAL_UDP", &self.experimental_udp),
             ("SWARM_ONION_MAX_CONNECTIONS", &self.onion_max_connections),
             ("SWARM_ONION_MAX_PER_MINUTE", &self.onion_max_per_minute),
             ("SWARM_UPLOAD_KBPS", &self.upload_kbps),
@@ -239,6 +238,7 @@ impl Config {
             ("SWARM_NO_LAN", "lan", &self.lan),
             ("SWARM_NO_DHT", "dht", &self.dht),
             ("SWARM_NO_UPNP", "upnp", &self.upnp),
+            ("SWARM_NO_UDP", "udp", &self.udp),
         ] {
             let Some(value) = value else { continue };
             let enabled =
@@ -343,6 +343,12 @@ mod tests {
         assert!(got.contains(&("SWARM_NO_LAN", "1".into())));
         assert!(got.contains(&("SWARM_RELAY_DELAY_MS", "500".into())));
         assert!(!got.iter().any(|(name, _)| *name == "SWARM_NO_DHT"));
+    }
+
+    #[test]
+    fn udp_is_turned_off_by_false_only() {
+        assert!(vars("udp: false\n").contains(&("SWARM_NO_UDP", "1".into())));
+        assert!(vars("udp: true\n").is_empty());
     }
 
     #[test]

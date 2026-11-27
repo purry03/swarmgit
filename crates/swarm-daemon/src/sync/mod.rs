@@ -479,6 +479,10 @@ fn no_peers_detail(
              a port.",
         );
     }
+    if failures.relay_full {
+        text.push_str(" The relay is full. ");
+        text.push_str(swarm_relay::FULL_ADVICE);
+    }
     let relays_off = crate::net::relay::mode() == crate::net::relay::Mode::Off;
     if (failures.tried == 0 || failures.timed_out > 0 || failures.unreachable > 0)
         && failures.relay_tried == 0

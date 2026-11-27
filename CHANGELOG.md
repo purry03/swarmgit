@@ -2,7 +2,19 @@
 
 All notable changes to Swarmgit are recorded here.
 
-## Unreleased
+## 0.2.0 (2026-11-27)
+
+- UDP hole punching is enabled by default. After meeting through a relay, peers
+  try a direct UDP connection, which reveals each peer's IP address to the
+  other. Set `udp: false` to disable it. The old `experimental_udp` setting and
+  `--experimental-udp` flag have been removed.
+- The UDP path now has congestion control: it finds the speed of the link and
+  slows down on loss, where it used to keep a fixed 64 packets in flight.
+- `--requests-per-minute` now limits info and lookup requests from each address
+  to 120 per minute by default.
+- When a relay-wide limit is reached, `relay is full` appears in the relay log,
+  in `swarm status`, and in clone or pull errors. The message suggests what to
+  do next.
 
 ### Changed
 

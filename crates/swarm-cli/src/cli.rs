@@ -643,16 +643,8 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Daemon {
             foreground,
             detach,
-            experimental_udp,
             action,
-        } => {
-            // A daemon started from here inherits it; a running one keeps
-            // its settings until restarted.
-            if experimental_udp {
-                std::env::set_var("SWARM_EXPERIMENTAL_UDP", "1");
-            }
-            daemon(foreground || detach, experimental_udp, action).await
-        }
+        } => daemon(foreground || detach, action).await,
     }
 }
 

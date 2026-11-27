@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-/// Window of the connect rate limit.
+/// Window of the rate limits.
 const RATE_WINDOW: Duration = Duration::from_secs(60);
 /// Window of the per-node byte quota.
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -29,9 +29,41 @@ pub(crate) fn address_key(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// When each address last asked, within [`RATE_WINDOW`].
+type Rates = HashMap<IpAddr, VecDeque<Instant>>;
+
+/// Record one use by `ip`. False when it made `max_per_minute` already.
+fn allow(rates: &mut Rates, ip: IpAddr, max_per_minute: usize) -> bool {
+    let now = Instant::now();
+    let recent = |times: &VecDeque<Instant>| {
+        times
+            .back()
+            .is_some_and(|at| now.duration_since(*at) < RATE_WINDOW)
+    };
+    if rates.len() >= MAX_TRACKED && !rates.contains_key(&ip) {
+        rates.retain(|_, times| recent(times));
+        if rates.len() >= MAX_TRACKED {
+            return false;
+        }
+    }
+    let times = rates.entry(ip).or_default();
+    while times
+        .front()
+        .is_some_and(|at| now.duration_since(*at) >= RATE_WINDOW)
+    {
+        times.pop_front();
+    }
+    if times.len() >= max_per_minute {
+        return false;
+    }
+    times.push_back(now);
+    true
+}
+
 #[derive(Default)]
 struct Seen {
-    connects: HashMap<IpAddr, VecDeque<Instant>>,
+    connects: Rates,
+    requests: Rates,
     splices: HashMap<IpAddr, usize>,
     daily: HashMap<[u8; 32], (Instant, u64)>,
 }
@@ -50,31 +82,12 @@ impl Quotas {
 
     /// Count a connect attempt. False when the address made too many.
     pub(crate) fn connect(&self, ip: IpAddr, max_per_minute: usize) -> bool {
-        let now = Instant::now();
-        let mut seen = self.lock();
-        let recent = |times: &VecDeque<Instant>| {
-            times
-                .back()
-                .is_some_and(|at| now.duration_since(*at) < RATE_WINDOW)
-        };
-        if seen.connects.len() >= MAX_TRACKED && !seen.connects.contains_key(&ip) {
-            seen.connects.retain(|_, times| recent(times));
-            if seen.connects.len() >= MAX_TRACKED {
-                return false;
-            }
-        }
-        let times = seen.connects.entry(ip).or_default();
-        while times
-            .front()
-            .is_some_and(|at| now.duration_since(*at) >= RATE_WINDOW)
-        {
-            times.pop_front();
-        }
-        if times.len() >= max_per_minute {
-            return false;
-        }
-        times.push_back(now);
-        true
+        allow(&mut self.lock().connects, ip, max_per_minute)
+    }
+
+    /// Count an info or lookup request. False when the address made too many.
+    pub(crate) fn request(&self, ip: IpAddr, max_per_minute: usize) -> bool {
+        allow(&mut self.lock().requests, ip, max_per_minute)
     }
 
     /// Take one of the address's splice places, freed when the guard drops.
@@ -173,6 +186,9 @@ mod tests {
         let ip = address_key("198.51.100.1".parse().unwrap());
         assert!(quotas.connect(ip, 2) && quotas.connect(ip, 2));
         assert!(!quotas.connect(ip, 2));
+        // Requests are counted apart from connects.
+        assert!(quotas.request(ip, 1));
+        assert!(!quotas.request(ip, 1));
         tokio::time::advance(RATE_WINDOW).await;
         assert!(quotas.connect(ip, 2));
 

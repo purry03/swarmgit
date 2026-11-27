@@ -186,7 +186,7 @@ impl NetState {
     #[must_use]
     pub fn handshake_options(&self, timeout: Duration) -> swarm_net::Options {
         let mut extra_caps = Vec::new();
-        if self.settings.experimental_udp {
+        if self.settings.udp {
             extra_caps.push(punch::CAP.to_string());
         }
         swarm_net::Options {

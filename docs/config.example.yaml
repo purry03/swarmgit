@@ -21,6 +21,10 @@
 # lan: true                        # LAN multicast discovery
 # dht: true                        # Mainline DHT discovery
 # upnp: true                       # UPnP port mapping
+# lan_port: 42099                  # UDP port for LAN discovery
+# dht_bootstrap: host:6881         # use these instead of the built-in DHT nodes
+# dht_bind: 0.0.0.0                # IP address for the DHT socket
+# dht_port: 6881                   # DHT UDP port; defaults to any free port
 # find_timeout: 30                 # seconds a first clone waits for the LAN
 # max_pack_bytes: 2147483648
 # idle_exit_minutes: 30
@@ -39,4 +43,7 @@
 # onion_max_connections: 16        # onion visitors connected at once
 # onion_max_per_minute: 120        # new onion connections per minute
 # obfs: false                      # randomise handshake sizes and timing
-# experimental_udp: false          # try UDP hole punching past a relay
+# udp: true                        # Peers try a direct UDP connection after
+#                                  # meeting through a relay. Both need it on;
+#                                  # each can see the other's IP. IPv4 only.
+#                                  # Off behind a proxy.

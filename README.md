@@ -10,122 +10,152 @@
 </p>
 
 <p align="center">
+  <a href="https://discord.gg/VrT9CTjU3y"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865f2?style=flat-square&logo=discord&logoColor=white"></a>
+  <a href="https://github.com/purry03/swarmgit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/purry03/swarmgit/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-ee6352?style=flat-square"></a>
-  <img alt="Rust" src="https://img.shields.io/badge/rust-stable-101012?style=flat-square&logo=rust&logoColor=white">
   <img alt="Status: pre-1.0" src="https://img.shields.io/badge/status-pre--1.0-8b8991?style=flat-square">
 </p>
 
 Swarmgit is a peer-to-peer Git remote. A repository has a `swarm://` link, and
-anyone who can reach a peer holding that repository can clone it. There's no
-server to register with and no account to create. Connections are encrypted and
-authenticated, using a hybrid of established and post-quantum cryptography.
+anyone who can reach a peer holding it can clone it. There is no server to
+register with and no account to create. Connections are encrypted and
+authenticated with a mix of established and post-quantum cryptography.
 
-You keep the Git commands you already know. Swarmgit handles finding peers,
-moving objects and checking what arrives. A repository can be served from a
-laptop, a server, a bundle file, a static mirror or a relay.
+You keep the Git commands you already know. Swarmgit finds peers, moves the
+objects and checks everything that arrives.
+
+**Contents:** [Install](#install) · [Get this repository over Swarmgit](#get-this-repository-over-swarmgit) ·
+[Share a repository](#share-a-repository) · [Clone](#clone-and-update) ·
+[Merge requests](#merge-requests) · [More commands](#more-commands) ·
+[If a clone cannot connect](#if-a-clone-cannot-connect) · [Relays](#relays) ·
+[How it works](#how-it-works) · [Development](#development) · [Documentation](#documentation) · [Community](#community)
 
 ## Install
 
-To use Swarmgit you need Git. Building the packages also needs Docker with
-Compose v2.
+You need Git. Linux and macOS are supported.
 
-Packages are built inside Docker and written to `dist/`:
+### From a package
 
-| Platform | Architectures | Formats |
+Download from the [releases page](https://github.com/purry03/swarmgit/releases)
+or [swarmgit.com](https://swarmgit.com).
+
+| Platform | File | Install |
 | --- | --- | --- |
-| Linux | x86_64, aarch64 | `.deb`, `.rpm`, `.tar.gz` |
-| macOS | x86_64, aarch64 (Apple Silicon) | `.tar.gz` |
+| Debian, Ubuntu | `swarmgit_<version>_amd64.deb` or `_arm64.deb` | `sudo apt install ./<file>` |
+| Fedora, RHEL | `swarmgit-<version>-1.x86_64.rpm` or `.aarch64.rpm` | `sudo dnf install ./<file>` |
+| Other Linux | `swarmgit-<version>-linux-<arch>.tar.gz` | unpack, put `bin/` on your `PATH` |
+| macOS | `swarmgit-<version>-macos-<arch>.tar.gz` | unpack, put `bin/` on your `PATH` |
 
-From the repository root:
+Each release has a `SHA256SUMS` file. Check your download in the same folder:
 
 ```bash
-scripts/package.sh --deb --arch x86_64
-sudo apt install ./dist/swarmgit_*_amd64.deb   # Debian / Ubuntu
-
-scripts/package.sh --rpm --arch x86_64
-sudo dnf install ./dist/swarmgit-*.x86_64.rpm  # Fedora / RHEL
-
-scripts/package.sh --tar --macos               # macOS archives
+sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 --ignore-missing -c SHA256SUMS
 ```
 
-The Linux packages install `/usr/bin/swarm` and a `git-remote-swarm` symlink,
-plus shell completions for bash, zsh and fish and man pages (`man swarm`). They
-depend on `git` and `ca-certificates`. The client daemon starts on demand, so the client package
-has no systemd unit. Archives contain `bin/swarm`, `bin/git-remote-swarm` and
-`bin/swarm-relay`; put `bin/` on your `PATH`. Linux binaries link against glibc
-2.17, so they run on older distributions.
+The macOS binaries are not notarized by Apple. If macOS blocks them, run
+`xattr -dr com.apple.quarantine <unpacked folder>`.
 
-Each run writes `dist/SHA256SUMS`. With `--sign` (or `SIGN_KEY=<gpg key id>`)
-you also get `SHA256SUMS.asc` and the public key; check them with
-`gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c SHA256SUMS`. The macOS
-archives aren't signed or notarized by Apple, so a downloaded binary may need
-`xattr -d com.apple.quarantine swarm`.
+### From source
 
-The same script builds `swarm-relay`, the relay server package with a systemd
-unit. No relay is built into the client: it uses the relays you configure, the
-relay hints in links and public relays it discovers. Run your own if you don't
-want to depend on strangers. See the [relay guide](docs/RELAY-GUIDE.md).
+You need Rust 1.87 or newer and a C compiler.
 
-To build from source, see [Build and test](#build-and-test).
+```bash
+git clone https://github.com/purry03/swarmgit.git
+cd swarmgit
+cargo install --locked --path crates/swarm-cli
+ln -s swarm ~/.cargo/bin/git-remote-swarm
+```
 
-## Create and share a repository
+The last line matters: Git uses `git-remote-swarm` to handle `swarm://` links.
+To build the relay server too, run `cargo install --locked --path crates/swarm-relay`.
+
+### Check the install
+
+```bash
+swarm --version
+swarm status
+```
+
+A background daemon starts by itself when a command needs it. After an upgrade,
+run `swarm daemon restart` so the new version takes over.
+
+## Get this repository over Swarmgit
+
+Swarmgit's own source is shared on Swarmgit. Once installed:
+
+```bash
+git clone 'swarm://najdcuvszxvqowm2m4uhprqj6ctime3jhcg3ufczpvsyzazev5qa?h=relay:relay.swarmgit.com:42425@sz7x7keuqjneqlycogdqa2swzzs2z2rmg4pq2ev4xt6nf2dk5uya' swarmgit
+```
+
+Keep the quotes, because the link contains characters your shell would
+otherwise interpret. Your daemon then serves the copy too, which helps others
+get it; `swarm unseed` with the same link stops that.
+
+## Share a repository
 
 ```bash
 mkdir hello && cd hello
 git init -b main
-swarm init
-printf 'hello\n' > README.md
+swarm init                         # creates the key and a remote called "swarm"
+echo hello > README.md
 git add README.md
 git commit -m 'first commit'
 git push swarm main
-swarm link
+swarm link                         # prints the link to give to others
 ```
 
-`swarm init` creates the repository key and a remote called `swarm`.
-`swarm link` prints the link to share:
+For an existing project, run `swarm init` inside it, then `git push swarm main`.
 
-```text
-swarm://<repo-id>?h=tcp:host:42424@<node-id>
-```
+Your machine serves the repository for as long as its daemon runs. If it is the
+only copy, it must be online when someone clones.
 
-Anyone who can reach the peer named in the link can clone the repository.
-
-The owner or a maintainer can also give the repository a name and description,
-which `swarm inspect` and the web explorer show:
+**Back up the repository key.** Without it you can never push again.
 
 ```bash
-swarm about <repo> --name "hello" --description "a first repository"
+swarm key backup --output hello.key <repo-id>
 ```
 
-`swarm status` shows what the daemon is serving. To look at a repository before
-cloning it, `swarm inspect '<link>'` shows its name, description, branches,
-tags and fork links from signed metadata, without downloading any objects.
+**A link is the permission to read.** Anyone who has it can clone the
+repository, so treat the link of a private project like a secret.
 
-## Clone a repository
+Give the repository a name that others see before they clone:
 
 ```bash
-git clone 'swarm://<repo-id>?h=tcp:host:42424@<node-id>' hello-copy
-cd hello-copy
-git remote rename origin swarm
+swarm about <repo-id> --name "hello" --description "a first repository"
 ```
 
-After that, `git fetch`, `git pull` and `git push swarm main` work as usual.
+## Clone and update
 
-> Pushing from a clone needs the repository signing key. To share write access,
-> copy the key or authorize a maintainer key. The
-> [client guide](docs/USER-GUIDE.md) covers both.
+```bash
+swarm inspect '<link>'             # name, branches and tags, without downloading
+git clone '<link>' hello
+cd hello
+git pull                           # later updates
+```
+
+Cloning also makes your daemon serve the repository to others who have its
+link. Run `swarm unseed '<link>'` if you would rather it did not.
+
+Pushing needs a signing key. If you do not have one, [open a merge
+request](#merge-requests), make your own copy with `swarm fork '<link>'`, or ask
+the owner to add you as a maintainer:
+
+```bash
+swarm key new <repo-id>                       # you: prints your key ID
+swarm maintainers add <repo-id> <key-id>      # the owner
+```
 
 ## Merge requests
 
-Anyone with the link can propose a branch. No repo key is needed:
+Anyone with the link can propose a branch. No key is needed.
 
 ```bash
 git checkout -b fix
 git commit -am "Fix the thing"
-swarm mr create                  # run it again after more commits
+swarm mr create                    # run again after more commits
 ```
 
-The owner and anyone else discuss, review and merge it, naming it by its branch:
+Review and merge it by branch name:
 
 ```bash
 swarm mr list
@@ -135,109 +165,137 @@ swarm mr review fix --approve
 swarm mr merge fix
 ```
 
-From a fork, `swarm mr create -R '<link of the original>'` proposes the branch
-there. The conversation is signed, stored with the repo, and cannot be edited
-afterwards. See [merge requests](docs/USER-GUIDE.md#7-merge-requests).
+From a fork, `swarm mr create -R '<link of the original>'` proposes your branch
+there. Comments are signed and cannot be edited or deleted.
 
-## Try the two-peer demo
+## More commands
 
-If you have Docker, you can try Swarmgit without installing the client. This
-builds two peers and runs a clone, push and pull between them:
+| Task | Command |
+| --- | --- |
+| See the daemon, your repositories and relays | `swarm status` |
+| Keep serving someone's repository | `swarm seed '<link>'` |
+| Stop serving it | `swarm unseed '<link>'` |
+| Remove it from this machine | `swarm purge <repo-id>` |
+| Make an independent copy you can push to | `swarm fork '<link>'` |
+| Save a repository to one file | `swarm export '<link>' --output repo.swarmbundle` |
+| Load that file elsewhere | `swarm import repo.swarmbundle` |
+| Restart the daemon | `swarm daemon restart` |
 
-```bash
-docker compose -f compose.peers.yaml up -d --build
-./scripts/peers-demo.sh
+Every command has `--help` and a manual page, such as `man swarm-mr-create`.
+
+## If a clone cannot connect
+
+`no_peers` means no machine holding the repository could be reached.
+
+1. Check that the sharing machine is on and `swarm status` there shows the
+   repository as seeded.
+2. Ask for a fresh `swarm link`. Its hints may have changed.
+3. Home routers and mobile networks often block incoming connections. Use a
+   relay (below), forward TCP port 42424 to the sharing machine, or put both
+   machines on one network or VPN.
+
+The [client guide](docs/USER-GUIDE.md) has a fuller troubleshooting section.
+
+## Relays
+
+A relay lets two machines connect when neither can accept an incoming
+connection. It only passes encrypted bytes along and cannot read your code. It
+does see IP addresses and traffic volume.
+
+No relay is built in. Swarmgit uses the relays you configure, the ones named in
+links and public relays it discovers. To use your own, add this to
+`~/.config/swarmgit/config.yaml` and restart the daemon:
+
+```yaml
+relays:
+  - relay.example.org:42425
+relay_discovery: off     # optional: use no relays but yours
 ```
 
-Open a shell on a peer with:
+To run a relay, see the [relay guide](docs/RELAY-GUIDE.md).
 
-```bash
-docker compose -f compose.peers.yaml exec peer-a bash
-```
+## How it works
 
-The [client guide](docs/USER-GUIDE.md) covers the same demo by hand, and everything
-from installing to keys, seeding and configuration.
-
-## Why Swarmgit
-
-- **A link is enough.** No registry or company assigns the name; the link
-  identifies the repository.
-- **Any copy can serve it.** A laptop, a server, a bundle, a mirror or a relay
-  all work. One copy is enough.
-- **You can check what you get.** Swarmgit verifies objects and signed updates
-  before they reach your repository, and connections are encrypted.
-- **Git stays Git.** Your editor, hooks, history and CI keep working. There's
-  no new workflow to learn.
-
-## How it finds a copy
+- The repository ID in a link is a hash of the owner's public key. Every update
+  is signed, and your machine checks the signature before moving a branch.
+- Git objects are checked as they arrive, so a peer, relay or mirror cannot
+  alter your code.
+- Peers are found through several independent routes, and any one is enough:
 
 | Route | What it does |
 | --- | --- |
-| Link hints | The link names a few places to look first. |
-| Local network | Peers on the same LAN find each other, even without internet. |
-| Global lookup | The Mainline DHT searches for a peer without a central directory. |
-| Peer introductions | A connected peer points you to other copies it knows. |
-| Offline bundles | Export the repository to one file, move it, then import and clone. |
-| Static mirrors | Host a signed copy on any file host; clients check what they download. |
-| Relays | Connect out through a relay when NAT or a firewall blocks direct connections. |
+| Link hints | The link names places to look first |
+| Local network | Machines on the same LAN find each other, even offline |
+| Mainline DHT | Finds peers without a central directory |
+| Peer introductions | A connected peer shares other addresses it knows |
+| Relays | Reaches machines behind NAT or a firewall |
+| Static mirrors | A signed copy on any file host |
+| Bundles | A file you carry across yourself |
 
-## Build and test
+Tor and SOCKS5 proxies are supported; see the [Tor guide](docs/TOR-GUIDE.md).
 
-Some host `cargo` versions can't read the toolchain this repo pins, so build
-through the development image:
+Swarmgit is pre-1.0. The protocol and commands may still change, and it has not
+had an external security audit.
 
-```bash
-docker compose run --rm dev bash -c 'cargo build --workspace'
-docker compose run --rm dev bash -c 'cargo test --workspace'
-docker compose run --rm dev bash -c 'cargo clippy --workspace --all-targets -- -D warnings'
-docker compose run --rm dev bash -c 'cargo fmt --all -- --check'
-
-docker compose run --rm dev bash -c 'tests/e2e/m1.sh'
-docker compose run --rm dev bash -c 'tests/e2e/m2.sh'
-docker compose run --rm dev bash -c 'tests/e2e/dht.sh'   # M4, local DHT testnet
-docker compose run --rm dev bash -c 'tests/e2e/m5.sh'    # M5, relay, PEX, seeders
-```
-
-To run everything at once (fmt, clippy, tests and all the e2e scripts), use the
-privileged dev container. The LAN test needs root because it sets up network
-namespaces:
+## Development
 
 ```bash
-scripts/ci.sh
+cargo build --workspace
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --locked --workspace
+tests/e2e/m1.sh                    # end-to-end scripts need a build first
 ```
+
+GitHub CI runs all of the above and every end-to-end script. The network tests
+need Linux and root; [ci.yml](.github/workflows/ci.yml) lists the tools to
+install and how the full run ([scripts/ci.sh](scripts/ci.sh)) is started.
+
+After changing the command line, run `scripts/gen-completions.sh` to update the
+completions and manual pages.
+
+### Releases
+
+Set `version` in `Cargo.toml`, run `cargo update --workspace` and
+`scripts/gen-completions.sh`, date the [changelog](CHANGELOG.md) entry and merge
+to `main`. Then push a matching tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The [release workflow](.github/workflows/release.yml) tests, builds the packages
+and publishes them.
+
+### Layout
+
+| Path | Contents |
+| --- | --- |
+| `crates/swarm-core` | Keys, signatures, manifests, merge request events |
+| `crates/swarm-store` | Data directory, database, bare Git stores, settings |
+| `crates/swarm-net` | Encrypted handshake and wire messages |
+| `crates/swarm-disc` | Links, LAN and DHT discovery |
+| `crates/swarm-daemon` | Background daemon: sync, serve, publish |
+| `crates/swarm-cli` | `swarm` and `git-remote-swarm` |
+| `crates/swarm-relay` | Relay server and client |
+| `crates/swarm-testpeer` | Hostile peer used by tests |
+| `fuzz`, `tests` | Fuzz targets, test vectors, end-to-end scripts |
 
 ## Documentation
 
 | Document | What it covers |
 | --- | --- |
-| [Client guide](docs/USER-GUIDE.md) | Installing, daily use, merge requests, seeding, reachability, keys, settings and troubleshooting. |
-| [Relay guide](docs/RELAY-GUIDE.md) | Installing and running a relay, firewall and DNS, private and public relays, client setup, upgrades and troubleshooting. |
-| [Tor guide](docs/TOR-GUIDE.md) | SOCKS5 proxying and onion services. |
-| [Relay design](docs/RELAY-DESIGN.md) | Relay protocol and network discovery design. |
-| [Changelog](CHANGELOG.md) | What changed in each milestone. |
-| [Protocol spec](Swarmgit%20Agent-Buildable%20Spec%20for%20a%20Zero-Setup%20P2P%20Git.md) | The full protocol and implementation spec. |
+| [Client guide](docs/USER-GUIDE.md) | Installing, daily use, keys, settings and troubleshooting |
+| [Relay guide](docs/RELAY-GUIDE.md) | Running a relay and connecting clients to it |
+| [Tor guide](docs/TOR-GUIDE.md) | SOCKS5 proxying and onion services |
+| [Example settings](docs/config.example.yaml) | Every setting, commented |
+| [Changelog](CHANGELOG.md) | What changed in each version |
 
-## Project status
+## Community
 
-Swarmgit is pre-1.0. The tree includes milestones M0 through M9 and relay
-support: core types, the daemon with its CLI and remote helper, encrypted
-transport, LAN and DHT discovery, peer exchange, multi-peer fetch, bundles,
-maintainers, merge requests, static mirrors, key recovery and rotation, relays, SOCKS5 and Tor,
-traffic shaping, inbound limits and experimental UDP hole punching. The
-protocol and CLI may still change before 1.0.
-
-## Layout
-
-- `crates/swarm-core`: types, canonical CBOR, manifests, resolve, hybrid PQ.
-- `crates/swarm-store`: `$SWARM_HOME`, sqlite, bare git stores.
-- `crates/swarm-net`: Noise + ML-KEM handshake, ChaCha framing, messages.
-- `crates/swarm-disc`: link-hint, LAN multicast and Mainline DHT discovery,
-  plus the `swarm-dht-testnet` helper.
-- `crates/swarm-daemon`: IPC daemon, peer listener, sync, publish.
-- `crates/swarm-cli`: the `swarm` binary and `git-remote-swarm` helper.
-- `crates/swarm-relay`: relay server and client for peers that can't accept
-  inbound connections.
-- `crates/swarm-testpeer`: hostile peer fixtures for the acceptance tests.
+Questions, bug reports and ideas are welcome on
+[Discord](https://discord.gg/VrT9CTjU3y).
 
 ## License
 

@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH swarm-relay 1  "swarm 0.1.0" "Swarmgit manual"
+.TH swarm-relay 1  "swarm 0.2.0" "Swarmgit manual"
 .SH NAME
 swarm\-relay \- Run a relay server for peers that cannot accept connections
 .SH SYNOPSIS
-\fBswarm relay\fR [\fB\-\-listen\fR] [\fB\-\-name\fR] [\fB\-\-allow\-node\fR] [\fB\-\-password\-file\fR] [\fB\-\-key\-file\fR] [\fB\-\-metrics\fR] [\fB\-\-max\-listeners\fR] [\fB\-\-max\-splices\fR] [\fB\-\-listeners\-per\-ip\fR] [\fB\-\-splices\-per\-ip\fR] [\fB\-\-connects\-per\-minute\fR] [\fB\-\-splice\-kib\-per\-sec\fR] [\fB\-\-node\-daily\-mib\fR] [\fB\-\-idle\-secs\fR] [\fB\-\-no\-network\fR] [\fB\-\-public\fR] [\fB\-\-allow\-private\fR] [\fB\-\-round\-secs\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBswarm relay\fR [\fB\-\-listen\fR] [\fB\-\-name\fR] [\fB\-\-allow\-node\fR] [\fB\-\-password\-file\fR] [\fB\-\-key\-file\fR] [\fB\-\-metrics\fR] [\fB\-\-max\-listeners\fR] [\fB\-\-max\-splices\fR] [\fB\-\-listeners\-per\-ip\fR] [\fB\-\-splices\-per\-ip\fR] [\fB\-\-connects\-per\-minute\fR] [\fB\-\-requests\-per\-minute\fR] [\fB\-\-splice\-kib\-per\-sec\fR] [\fB\-\-node\-daily\-mib\fR] [\fB\-\-idle\-secs\fR] [\fB\-\-no\-network\fR] [\fB\-\-public\fR] [\fB\-\-allow\-private\fR] [\fB\-\-round\-secs\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Run a relay server for peers that cannot accept connections
 .SH OPTIONS
@@ -41,6 +41,9 @@ Most splices one dialing address may have open
 .TP
 \fB\-\-connects\-per\-minute\fR \fI<CONNECTS_PER_MINUTE>\fR [default: 20]
 Most connect attempts from one address in a minute
+.TP
+\fB\-\-requests\-per\-minute\fR \fI<REQUESTS_PER_MINUTE>\fR [default: 120]
+Most info and lookup requests from one address in a minute
 .TP
 \fB\-\-splice\-kib\-per\-sec\fR \fI<SPLICE_KIB_PER_SEC>\fR [default: 8192]
 Rate of one splice in KiB per second, 0 for no limit

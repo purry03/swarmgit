@@ -1,5 +1,4 @@
-//! Experimental UDP path between two NATed peers (spec 11.10, off unless
-//! `--experimental-udp`).
+//! UDP path between two NATed peers (spec 11.10).
 //!
 //! Three pieces: [`reflect`] asks a relay how our UDP socket looks from
 //! outside, [`punch`] sends probes both ways until one gets through, and
@@ -17,6 +16,7 @@ use tokio::time::Instant;
 
 use swarm_core::crypto;
 
+mod congestion;
 mod stream;
 
 pub use stream::stream;

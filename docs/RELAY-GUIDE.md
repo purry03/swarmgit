@@ -36,7 +36,7 @@ find through the DHT.
 
 - A Linux server with a stable public IP address. Behind NAT, forward the port.
 - Preferably a DNS name pointing at it, such as `relay.example.org`.
-- Inbound **TCP 42425**. Also **UDP 42425** if clients use experimental hole
+- Open inbound **TCP 42425** for relay connections and **UDP 42425** for hole
   punching.
 - Little CPU and memory. Bandwidth is the real cost: every relayed byte comes
   in and goes out again.
@@ -77,8 +77,8 @@ Open the same ports in your cloud provider's firewall or security group.
 On a Debian or Ubuntu server with a DNS name already pointing at it:
 
 ```bash
-curl -O https://swarmgit.com/downloads/swarm-relay_0.1.0_amd64.deb
-sudo apt install ./swarm-relay_0.1.0_amd64.deb
+curl -O https://swarmgit.com/downloads/swarm-relay_0.2.0_amd64.deb
+sudo apt install ./swarm-relay_0.2.0_amd64.deb
 sudoedit /etc/default/swarm-relay
 ```
 
@@ -126,12 +126,12 @@ Finally, clone that link from a different network.
 
 ### Debian and Ubuntu
 
-Packages: `swarm-relay_0.1.0_amd64.deb` and `swarm-relay_0.1.0_arm64.deb` from
+Packages: `swarm-relay_0.2.0_amd64.deb` and `swarm-relay_0.2.0_arm64.deb` from
 `https://swarmgit.com/downloads/`. Check them against `SHA256SUMS` there:
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
-sudo apt install ./swarm-relay_0.1.0_amd64.deb
+sudo apt install ./swarm-relay_0.2.0_amd64.deb
 ```
 
 The package installs:
@@ -150,10 +150,10 @@ public network and set no `--name`. Set your name before relying on it.
 ### Fedora and RHEL
 
 The RPM is built with `scripts/package.sh --rpm` as
-`swarm-relay-0.1.0-1.x86_64.rpm` (or `aarch64`):
+`swarm-relay-0.2.0-1.x86_64.rpm` (or `aarch64`):
 
 ```bash
-sudo dnf install ./swarm-relay-0.1.0-1.x86_64.rpm
+sudo dnf install ./swarm-relay-0.2.0-1.x86_64.rpm
 ```
 
 It uses the same unit and settings file.
@@ -208,7 +208,7 @@ Stop it with Ctrl-C. Without `--no-network` it joins the public network.
 ### Build from source
 
 ```bash
-docker compose run --rm dev cargo build --release -p swarm-relay
+cargo build --release --locked -p swarm-relay
 ```
 
 The binary is `target/release/swarm-relay`.
@@ -260,28 +260,34 @@ sudo cp /var/lib/swarm-relay/relay.key /root/relay.key.backup
 
 | Option | Purpose | Default |
 | --- | --- | --- |
-| `--listen ADDRESS` | Bind address. | `0.0.0.0:42425` |
-| `--name HOST:PORT` | Public name; repeatable. | none |
-| `--key-file FILE` | Keep the relay key. | new key each start |
-| `--password-file FILE` | Require a shared secret; needs `--key-file`. | off |
-| `--allow-node NODE_ID` | Let only this node register; repeatable. | all nodes |
-| `--metrics ADDR` | Counters over HTTP. | off |
-| `--max-listeners N` | Registered peers. | 10000 |
-| `--listeners-per-ip N` | Registered peers per address. | 2 |
-| `--max-splices N` | Relayed sessions at once. | 500 |
-| `--splices-per-ip N` | Sessions per dialing address. | 8 |
-| `--connects-per-minute N` | Connect attempts per address. | 20 |
-| `--splice-kib-per-sec N` | Rate of one session; 0 for no limit. | 8192 |
-| `--node-daily-mib N` | Bytes per target node per day. | 10240 |
-| `--idle-secs N` | Close an idle session. | 120 |
-| `--no-network` | No DHT announce and no gossip. | off |
-| `--public` | Announce without first being dialed back. | off |
-| `--allow-private` | Accept private relay addresses, for closed networks. | off |
-| `--round-secs N` | Seconds between gossip rounds. | 1800 |
+| `--listen ADDRESS` | Address and port to listen on. | `0.0.0.0:42425` |
+| `--name HOST:PORT` | Public address clients should use; can be repeated. | none |
+| `--key-file FILE` | File for the relay key, kept across restarts. | new key each start |
+| `--password-file FILE` | Require a shared password; use with `--key-file`. | off |
+| `--allow-node NODE_ID` | Allow only this node to register; can be repeated. | all nodes |
+| `--metrics ADDR` | Serve counters over HTTP at this address. | off |
+| `--max-listeners N` | Maximum number of registered peers. | 10000 |
+| `--listeners-per-ip N` | Maximum registered peers from one address. | 2 |
+| `--max-splices N` | Maximum number of relayed sessions at once. | 500 |
+| `--splices-per-ip N` | Maximum sessions from one dialing address. | 8 |
+| `--connects-per-minute N` | Maximum connection attempts per address per minute. | 20 |
+| `--requests-per-minute N` | Maximum info and lookup requests per address per minute. | 120 |
+| `--splice-kib-per-sec N` | Rate limit for each session; `0` means unlimited. | 8192 |
+| `--node-daily-mib N` | Maximum data relayed for one target node each day. | 10240 |
+| `--idle-secs N` | Close a session after this many idle seconds. | 120 |
+| `--no-network` | Disable DHT announcements and relay gossip. | off |
+| `--public` | Announce without waiting for another relay to dial back. | off |
+| `--allow-private` | Accept private relay addresses on closed networks. | off |
+| `--round-secs N` | Time between relay gossip rounds, in seconds. | 1800 |
 
-At most 1,000 requests wait at once, each for 10 seconds. A silent control
-connection is closed after 75 seconds. Per-address limits do not apply to
-loopback, and IPv6 addresses are counted by /64.
+The relay queues up to 1,000 requests. Each waits at most 10 seconds. It closes
+a control connection after 75 seconds of silence. Per-address limits do not
+apply to loopback; IPv6 addresses are counted by /64.
+
+If the relay reaches `--max-listeners`, `--max-splices`, or the 1,000-request
+queue limit, it returns `relay is full`. It logs this warning at most once a
+minute. Clients display the message and suggest trying later or using another
+relay.
 
 ### A private relay
 
@@ -409,9 +415,11 @@ a node ID or repo ID can ask relays which of them holds it; they see a hash of
 the repo ID, never the ID. Relays do not forward to each other, so a transfer
 crosses at most one.
 
-`relay_max_bytes` (default 2 GiB) limits what one connection moves through a
-relay. With `experimental_udp` on at both ends, peers try to move to a direct
-UDP path and keep the relayed connection as a fallback.
+`relay_max_bytes` defaults to 2 GiB per connection. After peers meet through
+the relay, they also try a direct UDP connection. The relay stays open as a
+fallback for the sync. This can save relay bandwidth, but each peer can see the
+other's IP address. Set `udp: false` on either peer to keep the transfer on the
+relay.
 
 ## 7. Operate the relay
 
@@ -507,11 +515,15 @@ ways, so large clones cost mostly bandwidth.
 | Rate of one session | 8 MiB/s |
 | Bytes per target node per day | 10 GiB |
 | Idle session timeout | 120 seconds |
+| Connect attempts per address | 20 a minute |
+| Info and lookup requests per address | 120 a minute |
 
-To cap what a small server spends, lower `--max-splices`,
-`--splice-kib-per-sec` and `--node-daily-mib`. Raising limits does not add
-bandwidth or file descriptors, so watch CPU, memory, descriptors and traffic
-first. Daily quotas are kept in memory and start again when the relay restarts.
+On a small server, lower `--max-splices`, `--splice-kib-per-sec`, and
+`--node-daily-mib` to limit concurrent sessions, each session's transfer rate,
+and daily traffic to a target node. Higher limits do not add bandwidth or file
+descriptors, so check CPU, memory, open files, and traffic before raising them.
+For a server with one CPU and 512 MB of memory, start with `--max-splices 25`.
+Daily quotas are kept in memory and reset when the relay restarts.
 
 ## 9. Privacy and security
 
@@ -550,6 +562,8 @@ swarm status relays                        # on the seeder
 | `auth_failed: proof rejected` | The client's address differs from `--name`. Make them match. |
 | `auth_failed: this relay needs its password` | Set `relay_password`, and write the address with `#<key>`. |
 | `limit_exceeded: too many listeners` | More than 2 daemons behind one public address are registering. Raise `--listeners-per-ip`. |
+| `limit_exceeded: relay is full` | The relay log shows which server-wide limit was reached. Raise it only if the machine has room; otherwise, use another relay. |
+| `limit_exceeded: too many requests` | This address exceeded `--requests-per-minute` for info and lookup requests. |
 | `busy` or `limit_exceeded` on clone | A session or rate limit was reached. Check load before raising it. |
 | `none in use` on the seeder | No relay configured or found, or the machine is reachable directly. Set `relay_mode: always` to test. |
 | Link has no `h=relay:` hint | The seeder is not registered yet. Wait for `registered`, then run `swarm link` again. |
