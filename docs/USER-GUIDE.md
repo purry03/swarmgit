@@ -35,20 +35,20 @@ Two things follow from this:
 
 ## 2. Install
 
-You need `git`. Packages are at `https://swarmgit.com/downloads/`.
+You need `git`. Packages are at the [releases page](https://github.com/purry03/swarmgit/releases).
 
 | Platform | File (x86_64) | File (ARM64) |
 | --- | --- | --- |
-| Debian, Ubuntu | `swarm_0.2.0_amd64.deb` | `swarm_0.2.0_arm64.deb` |
-| Fedora, RHEL | `swarm-0.2.0-1.x86_64.rpm` | `swarm-0.2.0-1.aarch64.rpm` |
-| Other Linux | `swarm-0.2.0-linux-x86_64.tar.gz` | `swarm-0.2.0-linux-aarch64.tar.gz` |
-| macOS | `swarm-0.2.0-macos-x86_64.tar.gz` | `swarm-0.2.0-macos-aarch64.tar.gz` |
+| Debian, Ubuntu | `swarm_0.2.1_amd64.deb` | `swarm_0.2.1_arm64.deb` |
+| Fedora, RHEL | `swarm-0.2.1-1.x86_64.rpm` | `swarm-0.2.1-1.aarch64.rpm` |
+| Other Linux | `swarm-0.2.1-linux-x86_64.tar.gz` | `swarm-0.2.1-linux-aarch64.tar.gz` |
+| macOS | `swarm-0.2.1-macos-x86_64.tar.gz` | `swarm-0.2.1-macos-aarch64.tar.gz` |
 
 ### Check the download
 
 ```bash
-curl -O https://swarmgit.com/downloads/swarm_0.2.0_amd64.deb
-curl -O https://swarmgit.com/downloads/SHA256SUMS
+curl -LO https://github.com/purry03/swarmgit/releases/download/v0.2.1/swarm_0.2.1_amd64.deb
+curl -LO https://github.com/purry03/swarmgit/releases/download/v0.2.1/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
@@ -58,20 +58,20 @@ On macOS use `shasum -a 256 <file>` and compare it with the line in
 ### Debian and Ubuntu
 
 ```bash
-sudo apt install ./swarm_0.2.0_amd64.deb
+sudo apt install ./swarm_0.2.1_amd64.deb
 ```
 
 ### Fedora and RHEL
 
 ```bash
-sudo dnf install ./swarm-0.2.0-1.x86_64.rpm
+sudo dnf install ./swarm-0.2.1-1.x86_64.rpm
 ```
 
 ### Archive (any Linux, or macOS)
 
 ```bash
-tar xzf swarm-0.2.0-macos-aarch64.tar.gz
-cd swarm-0.2.0-macos-aarch64
+tar xzf swarm-0.2.1-macos-aarch64.tar.gz
+cd swarm-0.2.1-macos-aarch64
 sudo cp -R bin/swarm bin/git-remote-swarm bin/swarm-relay /usr/local/bin/
 ```
 
@@ -646,7 +646,7 @@ Neither bundles nor mirrors carry names, descriptions or merge requests.
 ## 14. Reading `swarm status`
 
 ```text
-Daemon    running (pid 207, version 0.2.0)
+Daemon    running (pid 207, version 0.2.1)
 Listen    0.0.0.0:42424
 Node      <node-id>
 

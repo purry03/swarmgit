@@ -2,7 +2,7 @@
 
 All notable changes to Swarmgit are recorded here.
 
-## Unreleased
+## 0.2.1 (2026-11-27)
 
 - Release files for the client are now named `swarm_…` and `swarm-…` instead of
   `swarmgit…`. The installed package is still called `swarmgit`.
