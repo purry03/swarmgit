@@ -1,5 +1,6 @@
 //! Repo operations behind the IPC commands: init, sync and publish.
 
+mod about;
 mod admin;
 mod bundle;
 mod maintainers;
@@ -7,8 +8,12 @@ mod mirror;
 mod publish;
 mod recovery;
 
+pub use about::about;
 use admin::announce_routes;
-pub use admin::{fork, gc, list_repos, repo_info, set_seeding, status};
+pub(crate) use admin::deleted_workdirs;
+pub use admin::{
+    fork, gc, list_repos, peers, purge, record_workdir, repo_info, set_seeding, status,
+};
 pub use bundle::{export, import};
 pub use maintainers::{accept_ref, key_id_of, key_new, maintainers};
 pub use mirror::mirror_export;
@@ -168,12 +173,16 @@ pub async fn init_repo(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
     let stored = StoredManifest::from(envelope);
     store.write_manifest(&stored)?;
 
+    let git_dir = worktree
+        .output(&["rev-parse", "--absolute-git-dir"])
+        .await?;
     {
         let db = state
             .db
             .lock()
             .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
         db.insert_repo(repo, &object_format, now())?;
+        db.record_workdir(repo, git_dir.trim())?;
         db.upsert_signer(repo, signer_id, 1, &stored.manifest_id)?;
         db.set_seeding(repo, true)?;
         db.set_last_sync(repo, now())?;
@@ -238,6 +247,56 @@ pub async fn sync(
         "accepted": outcome.accepted,
         "rejected": outcome.rejected,
     }))
+}
+
+/// `inspect`: verify signed repository metadata without downloading objects.
+pub async fn inspect(
+    state: &DaemonState,
+    args: &Value,
+    progress: &Progress,
+) -> Result<Value, IpcError> {
+    let repo = parse_repo(arg_str(args, "repo")?)?;
+    let hints = arg_hints(args);
+    let net = state
+        .net()
+        .ok_or_else(|| IpcError::new("malformed", "network is not ready"))?;
+    let outcome = crate::sync::inspect_repo(net, repo, hints, progress)
+        .await
+        .map_err(net_error)?;
+    let refs: Vec<Value> = outcome
+        .ref_list
+        .iter()
+        .map(|(name, oid)| json!({ "name": name, "object": oid.to_hex() }))
+        .collect();
+    let peers: Vec<Value> = outcome
+        .peer_ids
+        .iter()
+        .map(|node_id| json!({ "nodeId": node_id, "state": "seeding" }))
+        .collect();
+    Ok(json!({
+        "repoId": repo.to_base32(),
+        "link": format!("swarm://{}", repo.to_base32()),
+        "sequence": outcome.seq,
+        "head": outcome.head,
+        "objectFormat": outcome.object_format,
+        "refs": refs,
+        "peers": peers,
+        "name": about_text(&outcome.about, |about| &about.name),
+        "description": about_text(&outcome.about, |about| &about.description),
+        "metadataOnly": true,
+        "state": outcome.state,
+    }))
+}
+
+/// One field of the name record, or none when unset.
+fn about_text(
+    record: &Option<swarm_core::VerifiedAbout>,
+    field: fn(&swarm_core::About) -> &String,
+) -> Option<&str> {
+    record
+        .as_ref()
+        .map(|record| field(&record.about).as_str())
+        .filter(|text| !text.is_empty())
 }
 
 /// Try each mirror in turn; the first bundle that imports wins.

@@ -1,7 +1,7 @@
 //! Session actor: request/response matching, unsolicited messages and packs.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,7 +10,7 @@ use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::error::NetError;
 use crate::frame::MAX_MESSAGE_BYTES;
-use crate::handshake::{PeerInfo, Transport};
+use crate::handshake::{Established, PeerInfo};
 use crate::message::Message;
 
 enum Pending {
@@ -34,6 +34,8 @@ const WRITER_TASK: usize = 1;
 struct Liveness {
     start: Instant,
     last_rx_ms: AtomicU64,
+    /// The peer broke the protocol, as opposed to just going away.
+    violated: AtomicBool,
     timeouts: AtomicU32,
     tasks: Mutex<Vec<AbortHandle>>,
 }
@@ -92,6 +94,12 @@ impl SessionHandle {
     #[must_use]
     pub fn is_closed(&self) -> bool {
         self.live.closed()
+    }
+
+    /// True when the connection ended because the peer broke the protocol.
+    #[must_use]
+    pub fn violated(&self) -> bool {
+        self.live.violated.load(Ordering::SeqCst)
     }
 
     /// Close the connection.
@@ -220,8 +228,8 @@ pub struct Session {
 impl Session {
     /// Start the actor over an established transport.
     #[must_use]
-    pub fn start(transport: Transport) -> Self {
-        let Transport {
+    pub fn start(transport: Established) -> Self {
+        let Established {
             info,
             mut reader,
             mut writer,
@@ -234,6 +242,7 @@ impl Session {
         let live = Arc::new(Liveness {
             start: Instant::now(),
             last_rx_ms: AtomicU64::new(0),
+            violated: AtomicBool::new(false),
             timeouts: AtomicU32::new(0),
             tasks: Mutex::new(Vec::new()),
         });
@@ -253,14 +262,22 @@ impl Session {
             loop {
                 let bytes = match reader.read_message(MAX_MESSAGE_BYTES).await {
                     Ok(bytes) => bytes,
-                    Err(_) => break,
+                    Err(err) => {
+                        if err.is_violation() {
+                            reader_live.violated.store(true, Ordering::SeqCst);
+                        }
+                        break;
+                    }
                 };
                 reader_live.touch();
                 let message = match Message::decode(&bytes) {
                     Ok(message) => message,
-                    Err(_) => break,
+                    Err(_) => {
+                        reader_live.violated.store(true, Ordering::SeqCst);
+                        break;
+                    }
                 };
-                if let Some(rid) = message.rid() {
+                if let Some(rid) = message.rid().filter(|_| message.is_reply()) {
                     let mut delivered = false;
                     let mut closed_stream = false;
                     if let Ok(mut pending) = reader_pending.lock() {
@@ -293,7 +310,11 @@ impl Session {
                             pending.remove(&rid);
                         }
                     }
-                    if delivered {
+                    // A reply nobody waits for any more (it came after the
+                    // timeout) is dropped: answering it would reach the
+                    // peer's own request of the same number. An `Error` may
+                    // be about the connection, so it is passed on.
+                    if delivered || !matches!(message, Message::Error { .. }) {
                         continue;
                     }
                 }
@@ -304,7 +325,10 @@ impl Session {
                         }
                     }
                     Message::Pong { .. } => {}
-                    Message::Hello { .. } => break,
+                    Message::Hello { .. } => {
+                        reader_live.violated.store(true, Ordering::SeqCst);
+                        break;
+                    }
                     other => {
                         if in_tx.send(other).await.is_err() {
                             break;

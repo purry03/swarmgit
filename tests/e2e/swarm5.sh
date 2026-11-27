@@ -61,7 +61,13 @@ copy() { # copy <from-svc> <path> <to-svc> <path>: move a file between isolated 
     run "$1" "cat '$2'" | run "$3" "mkdir -p \$(dirname '$4') && cat > '$4'"
 }
 
-"${DC[@]}" up -d --build >/dev/null 2>&1 || fail "could not start the topology"
+# Compose cannot read a Dockerfile that is a symlink out of the context, so
+# the image is built from the resolved path first.
+image=$(sed -n 's/^  image: *//p' compose.swarm5.yaml | head -n1)
+dockerfile=$(sed -n 's/^ *dockerfile: *//p' compose.swarm5.yaml | head -n1)
+docker build -q -f "$(realpath "$dockerfile")" -t "$image" . >/dev/null ||
+    fail "could not build the image"
+"${DC[@]}" up -d --no-build >/dev/null 2>&1 || fail "could not start the topology"
 
 section "the peers are isolated from each other, the relays reach everyone"
 B_IP=$("${DC[@]}" exec -T peer-b sh -c "ip -4 -o addr show eth0 | awk '{print \$4}' | cut -d/ -f1")

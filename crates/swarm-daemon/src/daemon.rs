@@ -8,7 +8,9 @@ use std::time::Duration;
 use fs2::FileExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::task::JoinSet;
 
+use swarm_core::ids::RepoId;
 use swarm_core::keyfile::NodeKey;
 use swarm_store::{keyio, Db, Home};
 
@@ -40,6 +42,21 @@ fn acquire_lock(home: &Home) -> anyhow::Result<Option<std::fs::File>> {
         Ok(()) => Ok(Some(file)),
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
         Err(err) => Err(err.into()),
+    }
+}
+
+/// Wait for the daemon of `home` to release its lock, which it does on exit.
+/// Returns false if it still holds it after `timeout`.
+pub async fn wait_until_stopped(home: &Home, timeout: Duration) -> anyhow::Result<bool> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if acquire_lock(home)?.is_some() {
+            return Ok(true);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -209,9 +226,40 @@ async fn wait_for_clients(state: &DaemonState, timeout: Duration) {
     }
 }
 
+/// Stop seeding a repo whose store was deleted from disk. `swarm seed` turns
+/// it back on.
+async fn stop_if_missing(net: &Arc<NetState>, repo: RepoId) -> bool {
+    let lock = net.sync_lock(repo);
+    let _held = lock.lock().await;
+    if net.store(repo).exists() {
+        return false;
+    }
+    if let Ok(db) = net.db.lock() {
+        let _ = db.set_seeding(repo, false);
+    }
+    net.close_sessions(repo);
+    tracing::warn!(repo = %repo.to_base32(), "store is missing from disk; no longer seeding");
+    true
+}
+
+/// Log a repo whose project folders are all gone. It stays seeded: the
+/// daemon's own copy is intact, and a folder may only have been moved.
+fn warn_if_folders_deleted(net: &NetState, repo: RepoId) {
+    let paths = match net.db.lock() {
+        Ok(db) => db.workdirs(repo).unwrap_or_default(),
+        Err(_) => return,
+    };
+    if let Some(gone) = crate::repo::deleted_workdirs(&paths) {
+        tracing::warn!(repo = %repo.to_base32(), folders = ?gone, "project folder deleted");
+    }
+}
+
 async fn seeded_sync_loop(state: Arc<DaemonState>) {
+    // The first check runs soon after start, so `status` has seeder counts.
+    let mut wait = Duration::from_secs(10);
     loop {
-        tokio::time::sleep(Duration::from_secs(300)).await;
+        tokio::time::sleep(wait).await;
+        wait = Duration::from_secs(300);
         let Some(net) = state.net().cloned() else {
             continue;
         };
@@ -221,19 +269,52 @@ async fn seeded_sync_loop(state: Arc<DaemonState>) {
             };
             db.repos().unwrap_or_default()
         };
-        for row in repos.into_iter().filter(|row| row.seeding) {
-            if let Err(err) =
-                crate::sync::sync_repo(&net, row.id, Vec::new(), &Progress::none()).await
-            {
-                tracing::debug!(code = err.code(), error = %err, "seeded sync failed");
-            }
+        check_repos(&net, repos).await;
+    }
+}
+
+/// Repos checked at once: most of a check is waiting for peers to answer.
+const MAX_CHECKS: usize = 8;
+
+/// Sync every seeded repo, several at a time.
+async fn check_repos(net: &Arc<NetState>, repos: Vec<swarm_store::RepoRow>) {
+    let queue: Vec<RepoId> = repos
+        .into_iter()
+        .filter(|row| row.seeding)
+        .map(|row| row.id)
+        .collect();
+    for &repo in &queue {
+        net.set_checking(repo, true);
+    }
+    let mut running = JoinSet::new();
+    for repo in queue {
+        if running.len() >= MAX_CHECKS {
+            let _ = running.join_next().await;
         }
+        let net = Arc::clone(net);
+        running.spawn(async move {
+            check_repo(&net, repo).await;
+            net.set_checking(repo, false);
+        });
+    }
+    while running.join_next().await.is_some() {}
+}
+
+async fn check_repo(net: &Arc<NetState>, repo: RepoId) {
+    // A sync would download a deleted store again.
+    if stop_if_missing(net, repo).await {
+        return;
+    }
+    warn_if_folders_deleted(net, repo);
+    if let Err(err) = crate::sync::sync_repo(net, repo, Vec::new(), &Progress::none()).await {
+        tracing::debug!(code = err.code(), error = %err, "seeded sync failed");
     }
 }
 
 /// Run the daemon until stopped. A second instance exits successfully.
 pub async fn run(home: Home) -> anyhow::Result<()> {
     home.ensure()?;
+    crate::net::settings::Settings::from_env()?;
     let Some(lock) = acquire_lock(&home)? else {
         return Ok(());
     };
@@ -278,14 +359,21 @@ pub async fn run(home: Home) -> anyhow::Result<()> {
         tokio::spawn(async move { net::serve::serve(net, tcp_listener, shutdown).await });
     }
 
-    if lan_disabled() {
-        tracing::info!("lan discovery disabled by SWARM_NO_LAN");
+    if let Some(proxy) = &net.settings.proxy {
+        // UDP and multicast cannot go through SOCKS5, so those routes stay
+        // off: nothing may leave around the proxy.
+        tracing::info!(?proxy, "using a proxy; lan, dht and upnp are off");
     } else {
-        start_lan(&net).await;
+        if lan_disabled() {
+            tracing::info!("lan discovery disabled by SWARM_NO_LAN");
+        } else {
+            start_lan(&net).await;
+        }
+        net::dht::start(&net).await;
+        net::upnp::start(&net);
     }
-    net::dht::start(&net).await;
-    net::upnp::start(&net);
     net::relay::start(&net);
+    net::onion::start(&net).await;
 
     let socket = home.socket_path();
     if socket.exists() {

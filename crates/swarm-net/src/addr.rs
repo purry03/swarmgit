@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use swarm_core::ids::NodeId;
 
+use crate::proxy::Endpoint;
 use crate::NetError;
 
 /// Kinds used by the `Peers` message.
@@ -29,26 +30,48 @@ pub enum PeerAddrKind {
 pub enum PeerAddr {
     /// TCP address.
     Tcp(SocketAddr),
+    /// An onion service, or a name only the proxy may resolve. Never sent in
+    /// `Peers`, which carries IP addresses only.
+    Named {
+        /// Host name.
+        host: String,
+        /// TCP port.
+        port: u16,
+    },
     /// A node that cannot accept inbound connections, reached through a
     /// relay (relay design spec 5.1). It always carries the node ID, so it is
     /// always pinned.
     Relay {
-        /// The relay's TCP address.
-        relay: SocketAddr,
+        /// The relay's address.
+        relay: Endpoint,
         /// The node behind the relay.
         node: NodeId,
     },
 }
 
 impl PeerAddr {
-    /// Socket address.
-    #[must_use]
+    /// Socket address, when there is a literal one.
     ///
     /// For a relay address this is the relay's own address.
-    pub fn socket(&self) -> SocketAddr {
+    #[must_use]
+    pub fn socket(&self) -> Option<SocketAddr> {
         match self {
-            Self::Tcp(addr) => *addr,
-            Self::Relay { relay, .. } => *relay,
+            Self::Tcp(addr) => Some(*addr),
+            Self::Named { .. } => None,
+            Self::Relay { relay, .. } => relay.socket(),
+        }
+    }
+
+    /// What to open a TCP connection to.
+    #[must_use]
+    pub fn endpoint(&self) -> Endpoint {
+        match self {
+            Self::Tcp(addr) => Endpoint::Ip(*addr),
+            Self::Named { host, port } => Endpoint::Name {
+                host: host.clone(),
+                port: *port,
+            },
+            Self::Relay { relay, .. } => relay.clone(),
         }
     }
 
@@ -58,11 +81,16 @@ impl PeerAddr {
         matches!(self, Self::Relay { .. })
     }
 
-    /// Encode for the `Peers` message. `node` adds kinds 5 and 7.
+    /// Encode for the `Peers` message. `node` adds kinds 5 and 7. An address
+    /// without an IP has no wire form and encodes to nothing.
     #[must_use]
     pub fn encode(&self, node: Option<NodeId>) -> Vec<u8> {
         match self {
+            Self::Named { .. } => Vec::new(),
             Self::Relay { relay, node } => {
+                let Some(relay) = relay.socket() else {
+                    return Vec::new();
+                };
                 let mut out = Vec::with_capacity(51);
                 match relay.ip() {
                     IpAddr::V4(ip) => {
@@ -130,7 +158,7 @@ impl PeerAddr {
                     node.ok_or_else(|| NetError::Malformed("relay address has no node ID".into()))?;
                 Ok((
                     PeerAddr::Relay {
-                        relay: addr.socket(),
+                        relay: addr.endpoint(),
                         node,
                     },
                     Some(node),
@@ -149,14 +177,15 @@ impl PeerAddr {
             let bad = || NetError::Malformed(format!("bad address {value}"));
             let (relay, node) = rest.rsplit_once('@').ok_or_else(bad)?;
             return Ok(Self::Relay {
-                relay: relay.parse::<SocketAddr>().map_err(|_| bad())?,
+                relay: Endpoint::parse(relay).ok_or_else(bad)?,
                 node: NodeId::from_base32(node).map_err(|_| bad())?,
             });
         }
-        value
-            .parse::<SocketAddr>()
-            .map(Self::Tcp)
-            .map_err(|_| NetError::Malformed(format!("bad address {value}")))
+        match Endpoint::parse(value) {
+            Some(Endpoint::Ip(addr)) => Ok(Self::Tcp(addr)),
+            Some(Endpoint::Name { host, port }) => Ok(Self::Named { host, port }),
+            None => Err(NetError::Malformed(format!("bad address {value}"))),
+        }
     }
 }
 
@@ -198,6 +227,7 @@ impl fmt::Display for PeerAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Tcp(addr) => write!(f, "{addr}"),
+            Self::Named { host, port } => write!(f, "{host}:{port}"),
             Self::Relay { relay, node } => write!(f, "relay:{relay}@{}", node.to_base32()),
         }
     }
@@ -229,7 +259,7 @@ mod tests {
         let node = NodeId::from_bytes([9u8; 32]);
         for relay in ["203.0.113.5:42425", "[2001:db8::1]:42425"] {
             let addr = PeerAddr::Relay {
-                relay: relay.parse().unwrap(),
+                relay: Endpoint::Ip(relay.parse().unwrap()),
                 node,
             };
             // The node argument is ignored: the node is part of the address.
@@ -244,6 +274,23 @@ mod tests {
         // Kind 8 without the node bytes is malformed.
         assert!(PeerAddr::decode(&[8, 1, 2, 3, 4, 0, 1]).is_err());
         assert!(PeerAddr::parse_socket("relay:1.2.3.4:5").is_err());
+    }
+
+    #[test]
+    fn named_addresses_stay_out_of_the_wire_format() {
+        let onion = PeerAddr::parse_socket("abcd.onion:42424").unwrap();
+        assert!(matches!(onion, PeerAddr::Named { .. }));
+        assert!(onion.encode(None).is_empty() && onion.socket().is_none());
+        assert_eq!(onion.to_string(), "abcd.onion:42424");
+        let relayed = PeerAddr::Relay {
+            relay: onion.endpoint(),
+            node: NodeId::from_bytes([1; 32]),
+        };
+        assert!(relayed.encode(None).is_empty());
+        assert_eq!(
+            PeerAddr::parse_socket(&relayed.to_string()).unwrap(),
+            relayed
+        );
     }
 
     #[test]

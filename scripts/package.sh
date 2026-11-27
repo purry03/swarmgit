@@ -173,7 +173,7 @@ fi
 # Inside the packaging container.
 # ---------------------------------------------------------------------------
 if [[ ${SWARM_PKG_INSIDE:-} == 1 ]]; then
-    export CARGO_TARGET_DIR=/workspace/target/package
+    export CARGO_TARGET_DIR=$PWD/target/package
     WORK=$(mktemp -d)
     trap 'rm -rf "$WORK"' EXIT
     # Pin archive timestamps to the commit so identical sources give identical
@@ -228,6 +228,8 @@ User=swarm-relay
 Group=swarm-relay
 EnvironmentFile=-/etc/default/swarm-relay
 ExecStart=/usr/bin/swarm-relay $SWARM_RELAY_ARGS
+StateDirectory=swarm-relay
+StateDirectoryMode=0700
 Restart=always
 RestartSec=2
 LimitNOFILE=65536
@@ -255,8 +257,12 @@ EOF
 # --name is the exact host:port that clients put in SWARM_RELAYS. Set it to
 # this machine's public address or DNS name, then run:
 #   systemctl restart swarm-relay
-SWARM_RELAY_ARGS="--listen 0.0.0.0:42425"
-#SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --name relay.example.org:42425"
+#
+# --no-network keeps this relay private: only people you give its address to
+# use it. Remove it to join the public relay network, where any swarm client
+# may find and use this machine.
+SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --no-network --key-file /var/lib/swarm-relay/relay.key"
+#SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --name relay.example.org:42425 --key-file /var/lib/swarm-relay/relay.key"
 EOF
     }
 
@@ -565,7 +571,7 @@ else
 fi
 
 echo "== building $IMAGE"
-docker build -f Dockerfile.package -t "$IMAGE" \
+docker build -f "$(realpath Dockerfile.package)" -t "$IMAGE" \
     --build-arg USER_ID="$(id -u)" \
     --build-arg GROUP_ID="$(id -g)" \
     .

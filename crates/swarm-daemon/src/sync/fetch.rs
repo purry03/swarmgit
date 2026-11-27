@@ -3,9 +3,11 @@
 
 use std::time::Duration;
 
+use swarm_core::about::{verify_about, VerifiedAbout};
 use swarm_core::accept::AcceptState;
 use swarm_core::ids::{Oid, RepoId};
 use swarm_core::manifest::verify_envelope;
+use swarm_net::message::ABOUT_CAP;
 use swarm_net::{Message, NetError, SessionHandle};
 use swarm_store::RepoStore;
 use tokio::task::JoinSet;
@@ -15,6 +17,7 @@ use super::progress::{Progress, Transfer};
 use std::sync::Arc;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const ABOUT_TIMEOUT: Duration = Duration::from_secs(10);
 const PACK_CHUNK: usize = 256 * 1024;
 
 /// Ask `peers` for their heads and accept what verifies (SYNC-3 keeps the
@@ -84,6 +87,48 @@ pub async fn fetch_heads(
         }
     }
     (accepted, rejected)
+}
+
+/// Ask the peers that know about it for the repo's name and description, and
+/// keep the newest record whose signer `state` authorizes. A peer that does
+/// not answer is not marked as failed: the sync does not depend on this.
+pub async fn fetch_about(
+    repo: RepoId,
+    state: &AcceptState,
+    peers: &[Connected],
+) -> Option<VerifiedAbout> {
+    let now = crate::net::now() as u64;
+    let mut requests = JoinSet::new();
+    for peer in peers.iter().filter(|peer| !peer.failed) {
+        let info = peer.handle.info();
+        let capable = info.caps.iter().any(|cap| cap == ABOUT_CAP);
+        let Some(repo_ix) = info.repo_ix(repo).filter(|_| capable) else {
+            continue;
+        };
+        let handle = peer.handle.clone();
+        requests.spawn(async move {
+            handle
+                .request(Message::GetAbout { rid: 0, repo_ix }, ABOUT_TIMEOUT)
+                .await
+        });
+    }
+    let mut best: Option<VerifiedAbout> = None;
+    while let Some(reply) = requests.join_next().await {
+        let Ok(Ok(Message::About {
+            record: Some(record),
+            ..
+        })) = reply
+        else {
+            continue;
+        };
+        let Ok(about) = verify_about(&record) else {
+            continue;
+        };
+        if about.is_valid_for(state, now) && best.as_ref().is_none_or(|old| about.supersedes(old)) {
+            best = Some(about);
+        }
+    }
+    best
 }
 
 async fn fetch_pack(
@@ -172,7 +217,8 @@ fn assign(peers: &[Connected], missing: &[Oid]) -> Vec<(usize, Vec<Oid>)> {
 
 /// Fetch every object in `missing`, one `Want` per session at a time and
 /// in parallel. A session whose pack fails, or does not bring what it was
-/// asked for, is marked failed and its wants move to the others. Packs
+/// asked for, is marked failed and its wants move to the others; one on a
+/// punched UDP path goes back to its relayed session first. Packs
 /// already indexed stay, so the next round resumes where this one stopped.
 pub async fn fetch_missing(
     store: &RepoStore,
@@ -211,6 +257,8 @@ pub async fn fetch_missing(
                 )
             });
         }
+        // Peers that just went back to the relay: not to be marked failed.
+        let mut fell_back = Vec::new();
         while let Some(joined) = set.join_next().await {
             let Ok((ix, result)) = joined else { continue };
             let indexed = match result {
@@ -227,7 +275,14 @@ pub async fn fetch_missing(
             };
             if let Err(err) = indexed {
                 tracing::debug!(code = err.code(), error = %err, "pack from peer failed");
-                peers[ix].failed = true;
+                if let Some(relayed) = peers[ix].fallback.take() {
+                    tracing::info!("the udp path failed; carrying on over the relay");
+                    progress.say("pack", "the UDP path failed; carrying on over the relay");
+                    std::mem::replace(&mut peers[ix].handle, relayed).close();
+                    fell_back.push(ix);
+                } else {
+                    peers[ix].failed = true;
+                }
                 last_error = Some(err);
             }
         }
@@ -235,7 +290,7 @@ pub async fn fetch_missing(
         // pack: stop asking it, so every round makes progress.
         let still = missing_now();
         for (ix, wants) in plan {
-            if wants.iter().any(|want| still.contains(want)) {
+            if !fell_back.contains(&ix) && wants.iter().any(|want| still.contains(want)) {
                 peers[ix].failed = true;
             }
         }

@@ -156,6 +156,19 @@ impl Helper {
         }
     }
 
+    /// Tell the daemon which project uses this repo, so `status` can say
+    /// when it is deleted. Best effort.
+    async fn record_workdir(&mut self) {
+        let Some(dir) = std::env::var_os("GIT_DIR") else {
+            return;
+        };
+        let Ok(dir) = std::path::absolute(dir) else {
+            return;
+        };
+        let args = json!({ "repo": self.repo.to_base32(), "path": dir.to_string_lossy() });
+        let _ = self.client.call("workdir", args).await;
+    }
+
     fn note(&self, level: u64, message: impl AsRef<str>) {
         if self.verbosity >= level {
             eprintln!("swarm: {}", message.as_ref());
@@ -400,6 +413,7 @@ pub async fn run(args: Vec<String>) -> i32 {
                 if helper.fetch(&batch).await.is_err() {
                     return 1;
                 }
+                helper.record_workdir().await;
                 continue;
             }
             if !pushes.is_empty() {
@@ -408,6 +422,7 @@ pub async fn run(args: Vec<String>) -> i32 {
                     eprintln!("swarm: {err}");
                     return 1;
                 }
+                helper.record_workdir().await;
                 continue;
             }
             continue;

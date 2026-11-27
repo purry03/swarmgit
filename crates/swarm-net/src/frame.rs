@@ -6,11 +6,14 @@
 //! Logical messages are `u32` big-endian length followed by one CBOR array and
 //! may span several frames.
 
+use std::sync::Arc;
+
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::Zeroize;
 
+use crate::transport::{Plain, Shaper};
 use crate::NetError;
 
 /// Largest encrypted frame, tag included.
@@ -33,6 +36,7 @@ pub struct FrameWriter<W> {
     inner: W,
     cipher: ChaCha20Poly1305,
     counter: u64,
+    shaper: Arc<dyn Shaper>,
 }
 
 impl<W> Drop for FrameWriter<W> {
@@ -49,7 +53,15 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
             inner,
             cipher: ChaCha20Poly1305::new(Key::from_slice(key)),
             counter: 0,
+            shaper: Arc::new(Plain),
         }
+    }
+
+    /// Choose frame sizes with `shaper`.
+    #[must_use]
+    pub fn shaped(mut self, shaper: Arc<dyn Shaper>) -> Self {
+        self.shaper = shaper;
+        self
     }
 
     async fn write_frame(&mut self, plaintext: &[u8]) -> Result<(), NetError> {
@@ -72,10 +84,10 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
                 "frame ciphertext is too large".into(),
             ));
         }
-        self.inner
-            .write_all(&(ciphertext.len() as u16).to_be_bytes())
-            .await?;
-        self.inner.write_all(&ciphertext).await?;
+        let mut frame = Vec::with_capacity(2 + ciphertext.len());
+        frame.extend_from_slice(&(ciphertext.len() as u16).to_be_bytes());
+        frame.extend_from_slice(&ciphertext);
+        self.inner.write_all(&frame).await?;
         self.inner.flush().await?;
         Ok(())
     }
@@ -83,7 +95,8 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
     /// Write arbitrary bytes, splitting them into frames.
     pub async fn write_all(&mut self, mut data: &[u8]) -> Result<(), NetError> {
         while !data.is_empty() {
-            let take = data.len().min(MAX_FRAME_PLAINTEXT);
+            let limit = self.shaper.frame_len().clamp(1, MAX_FRAME_PLAINTEXT);
+            let take = data.len().min(limit);
             self.write_frame(&data[..take]).await?;
             data = &data[take..];
         }
@@ -94,8 +107,12 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
     pub async fn write_message(&mut self, message: &[u8]) -> Result<(), NetError> {
         let len = u32::try_from(message.len())
             .map_err(|_| NetError::LimitExceeded("message is too large".into()))?;
-        self.write_all(&len.to_be_bytes()).await?;
-        self.write_all(message).await
+        // One buffer, so the length prefix never travels as a frame of its
+        // own, which would be a size anyone on the path could recognize.
+        let mut data = Vec::with_capacity(4 + message.len());
+        data.extend_from_slice(&len.to_be_bytes());
+        data.extend_from_slice(message);
+        self.write_all(&data).await
     }
 
     /// Flush the inner stream.
@@ -218,9 +235,9 @@ mod tests {
         let (mut wire, peer) = duplex(4096);
         let mut writer = FrameWriter::new(peer, &key);
         writer.write_message(b"secret").await.unwrap();
-        let mut raw = vec![0u8; 2 + 6 + 16];
+        let mut raw = vec![0u8; 2 + 4 + 6 + 16];
         wire.read_exact(&mut raw).await.unwrap();
-        raw[8] ^= 1;
+        raw[12] ^= 1;
 
         let (mut inject, read_side) = duplex(4096);
         inject.write_all(&raw).await.unwrap();

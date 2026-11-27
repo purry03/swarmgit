@@ -62,8 +62,9 @@ archives aren't signed or notarized by Apple, so a downloaded binary may need
 `xattr -d com.apple.quarantine swarm`.
 
 The same script builds `swarm-relay`, the relay server package with a systemd
-unit. Swarmgit doesn't run a public relay, so you run your own or use one you
-trust. See the [relay guide](docs/RELAY-GUIDE.md).
+unit. No relay is built into the client: it uses the relays you configure, the
+relay hints in links and public relays it discovers. Run your own if you don't
+want to depend on strangers. See the [relay guide](docs/RELAY-GUIDE.md).
 
 To build from source, see [Build and test](#build-and-test).
 
@@ -88,6 +89,17 @@ swarm://<repo-id>?h=tcp:host:42424@<node-id>
 ```
 
 Anyone who can reach the peer named in the link can clone the repository.
+
+The owner or a maintainer can also give the repository a name and description,
+which `swarm inspect` and the web explorer show:
+
+```bash
+swarm about <repo> --name "hello" --description "a first repository"
+```
+
+`swarm status` shows what the daemon is serving. To look at a repository before
+cloning it, `swarm inspect '<link>'` checks its signed metadata without
+downloading any objects.
 
 ## Clone a repository
 
@@ -176,16 +188,18 @@ scripts/ci.sh
 | --- | --- |
 | [Client guide](docs/USER-GUIDE.md) | Docker demo, seeding, bundles, mirrors, maintainers, configuration and troubleshooting. |
 | [Relay guide](docs/RELAY-GUIDE.md) | Installing and running a relay, client registration, capacity and privacy. |
+| [Tor guide](docs/TOR-GUIDE.md) | SOCKS5 proxying and onion services. |
 | [Relay design](docs/RELAY-DESIGN.md) | Relay protocol and network discovery design. |
 | [Changelog](CHANGELOG.md) | What changed in each milestone. |
 | [Protocol spec](Swarmgit%20Agent-Buildable%20Spec%20for%20a%20Zero-Setup%20P2P%20Git.md) | The full protocol and implementation spec. |
 
 ## Project status
 
-Swarmgit is pre-1.0. The tree includes milestones M0 through M8 and relay
+Swarmgit is pre-1.0. The tree includes milestones M0 through M9 and relay
 support: core types, the daemon with its CLI and remote helper, encrypted
 transport, LAN and DHT discovery, peer exchange, multi-peer fetch, bundles,
-maintainers, static mirrors, key recovery and rotation, and relays. The
+maintainers, static mirrors, key recovery and rotation, relays, SOCKS5 and Tor,
+traffic shaping, inbound limits and experimental UDP hole punching. The
 protocol and CLI may still change before 1.0.
 
 ## Layout

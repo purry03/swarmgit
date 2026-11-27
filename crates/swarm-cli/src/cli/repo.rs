@@ -75,6 +75,63 @@ pub(super) async fn unseed(link: &str, json_output: bool) -> i32 {
     .await
 }
 
+/// Ask a question; anything but `yes` is a no.
+fn answered_yes(question: &str) -> bool {
+    eprint!("{question} ");
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer).is_ok() && answer.trim() == "yes"
+}
+
+pub(super) async fn purge(repo: &str, yes: bool, delete_key: bool, json_output: bool) -> i32 {
+    let (repo, _) = match parse_link(repo) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    let mut delete_key = delete_key;
+    if !yes {
+        eprintln!(
+            "This deletes the local store and manifests of {}.",
+            repo.to_base32()
+        );
+        if !answered_yes("Type yes to continue:") {
+            eprintln!("swarm: nothing was deleted");
+            return 1;
+        }
+        let has_key = Home::resolve().is_ok_and(|home| home.repo_key_path(repo).is_file());
+        if has_key && !delete_key {
+            eprintln!(
+                "This repo has a signing key. Without it, or a backup (swarm key backup),\n\
+                 nobody can publish to the repo from here again."
+            );
+            delete_key = answered_yes("Type yes to delete the key too, or press Enter to keep it:");
+        }
+    }
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "purge",
+                json!({ "repo": repo.to_base32(), "delete_key": delete_key }),
+            )
+            .await?;
+        if json_output {
+            println!("{}", json!({ "repo": repo.to_base32(), "purge": result }));
+        } else {
+            eprintln!("swarm: purged {}", repo.to_base32());
+            let flag = |key| result.get(key).and_then(Value::as_bool) == Some(true);
+            if flag("had_key") && !flag("key_deleted") {
+                eprintln!("swarm: kept the signing key");
+            }
+        }
+        Ok(0)
+    })
+    .await
+}
+
 pub(super) async fn gc(link: &str, json_output: bool) -> i32 {
     let (repo, _) = match parse_link(link) {
         Ok(value) => value,

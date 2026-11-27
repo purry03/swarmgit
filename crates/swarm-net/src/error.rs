@@ -83,6 +83,22 @@ impl NetError {
         }
     }
 
+    /// True when the other side sent something the protocol forbids. Going
+    /// away, stalling or not holding a repo is not a violation (7.4).
+    #[must_use]
+    pub fn is_violation(&self) -> bool {
+        matches!(
+            self,
+            Self::Cbor(_)
+                | Self::Crypto(_)
+                | Self::Noise(_)
+                | Self::PqHandshake(_)
+                | Self::AuthFailed(_)
+                | Self::Malformed(_)
+                | Self::LimitExceeded(_)
+        )
+    }
+
     /// True when another peer may still be tried.
     #[must_use]
     pub fn is_peer_failure(&self) -> bool {

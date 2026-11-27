@@ -1,19 +1,27 @@
 //! Daemon network state: listener address, node key, peer sessions (M2),
 //! and the DHT route, observed addresses and port mapping (M4, M5).
 
+pub mod capped;
 pub mod dht;
+pub mod discovery;
+pub mod limits;
+pub mod onion;
+pub mod punch;
 pub mod relay;
 pub mod serve;
+pub mod settings;
+pub mod topics;
 pub mod upnp;
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use swarm_core::ids::{Hint, HintScheme, Host, NodeId, RepoId};
 use swarm_core::keyfile::NodeKey;
+use swarm_net::transport::Transport;
 use swarm_net::{PeerAddr, SessionHandle};
 use swarm_store::{Db, Home, RepoStore};
 use tokio::net::TcpListener;
@@ -29,6 +37,15 @@ pub struct Registered {
     pub shared: Vec<(RepoId, u16)>,
     /// Unique registration number.
     pub id: u64,
+}
+
+/// The hidden service, when one is configured.
+#[derive(Clone, Debug, Default)]
+pub struct OnionState {
+    /// `<id>.onion` while the service is up.
+    pub host: Option<String>,
+    /// Why it is not.
+    pub error: Option<String>,
 }
 
 /// Shared network state used by the listener, sync and IPC handlers.
@@ -47,14 +64,39 @@ pub struct NetState {
     pub max_pack_bytes: usize,
     /// Concurrent uploads (WANT-5).
     pub uploads: Arc<tokio::sync::Semaphore>,
+    /// Proxy, obfuscation, hidden service and the other M9 settings.
+    pub settings: settings::Settings,
+    /// Opens and shapes peer connections.
+    pub transport: Arc<dyn Transport>,
+    /// Upload rate shared by every peer (`upload_kbps`).
+    pub throttle: limits::Throttle,
+    /// Inbound caps and the ban list.
+    pub limits: Arc<limits::Limits>,
+    /// UDP punches this node is answering.
+    pub punches: Arc<tokio::sync::Semaphore>,
+    onion: Mutex<OnionState>,
     sessions: Mutex<Vec<Registered>>,
     next_session: AtomicU64,
     sync_locks: Mutex<HashMap<[u8; 32], Arc<tokio::sync::Mutex<()>>>>,
+    /// Announces being handled (7.4).
+    pub announcing: serve::Announcing,
     lan: OnceLock<Arc<swarm_disc::lan::LanService>>,
     dht: OnceLock<swarm_disc::dht::MainlineDht>,
     observed: Mutex<HashMap<IpAddr, HashSet<[u8; 32]>>>,
     external: Mutex<Option<IpAddr>>,
     relays: Mutex<Vec<relay::RelayStatus>>,
+    /// Counts relay registrations made, so topics are published to each anew.
+    registrations: AtomicU64,
+    discovery: OnceLock<Arc<discovery::Discovery>>,
+    /// When a direct inbound connection was last shown to work.
+    reachable: Mutex<Option<std::time::Instant>>,
+    /// Nodes we currently reach only through a relay.
+    relayed: Mutex<HashMap<NodeId, String>>,
+    /// Per repo, how many other nodes returned its state at the last check,
+    /// and when that was. Not persisted: unknown after a restart.
+    seeders: Mutex<HashMap<RepoId, (usize, std::time::Instant)>>,
+    /// Repos the background check has queued or is checking.
+    checking: Mutex<std::collections::HashSet<RepoId>>,
 }
 
 impl NetState {
@@ -67,23 +109,129 @@ impl NetState {
         max_pack_bytes: usize,
     ) -> anyhow::Result<Arc<Self>> {
         let node_id = node.node_id()?;
+        let settings = settings::Settings::from_env()?;
         Ok(Arc::new(Self {
             home,
-            db,
+            db: Arc::clone(&db),
             node,
             node_id,
             listen,
             max_pack_bytes,
             uploads: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS as usize)),
+            transport: settings.transport(),
+            limits: limits::Limits::new(Arc::clone(&db), settings.onion_limits),
+            throttle: limits::Throttle::new(settings.upload_kbps),
+            punches: Arc::new(tokio::sync::Semaphore::new(punch::MAX_ANSWERING)),
+            onion: Mutex::new(OnionState::default()),
+            settings,
             sessions: Mutex::new(Vec::new()),
             next_session: AtomicU64::new(1),
             sync_locks: Mutex::new(HashMap::new()),
+            announcing: serve::Announcing::default(),
             lan: OnceLock::new(),
             dht: OnceLock::new(),
             observed: Mutex::new(HashMap::new()),
             external: Mutex::new(None),
             relays: Mutex::new(Vec::new()),
+            registrations: AtomicU64::new(0),
+            discovery: OnceLock::new(),
+            reachable: Mutex::new(None),
+            relayed: Mutex::new(HashMap::new()),
+            seeders: Mutex::new(HashMap::new()),
+            checking: Mutex::default(),
         }))
+    }
+
+    /// Record the result of a check for other seeders of `repo`.
+    pub fn set_seeders(&self, repo: RepoId, count: usize) {
+        self.seeders
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(repo, (count, std::time::Instant::now()));
+    }
+
+    /// Other seeders of `repo` and the age of that count, once checked.
+    #[must_use]
+    pub fn seeders(&self, repo: RepoId) -> Option<(usize, Duration)> {
+        self.seeders
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&repo)
+            .map(|(count, when)| (*count, when.elapsed()))
+    }
+
+    /// Mark `repo` as waiting for, or done with, its background check.
+    pub fn set_checking(&self, repo: RepoId, checking: bool) {
+        let mut set = self
+            .checking
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if checking {
+            set.insert(repo);
+        } else {
+            set.remove(&repo);
+        }
+    }
+
+    /// Whether the background check of `repo` is still to finish.
+    #[must_use]
+    pub fn is_checking(&self, repo: RepoId) -> bool {
+        self.checking
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(&repo)
+    }
+
+    /// Handshake limits and shaping for a new session.
+    #[must_use]
+    pub fn handshake_options(&self, timeout: Duration) -> swarm_net::Options {
+        let mut extra_caps = Vec::new();
+        if self.settings.experimental_udp {
+            extra_caps.push(punch::CAP.to_string());
+        }
+        swarm_net::Options {
+            timeout,
+            shaper: self.transport.shaper(),
+            extra_caps,
+        }
+    }
+
+    /// The hidden service state.
+    #[must_use]
+    pub fn onion(&self) -> OnionState {
+        self.onion
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn set_onion(&self, host: Option<String>) {
+        let mut onion = self
+            .onion
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *onion = OnionState { host, error: None };
+    }
+
+    fn set_onion_error(&self, error: String) {
+        let mut onion = self
+            .onion
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *onion = OnionState {
+            host: None,
+            error: Some(error),
+        };
+    }
+
+    /// The `onion:` hint for this node while its hidden service is up.
+    fn onion_hint(&self) -> Option<Hint> {
+        Some(Hint {
+            scheme: HintScheme::Onion,
+            host: Host::parse(&self.onion().host?)?,
+            port: self.listen.port(),
+            node: Some(self.node_id),
+        })
     }
 
     /// Attach the running DHT route. Later calls are ignored.
@@ -102,7 +250,9 @@ impl NetState {
         let Ok((addr, _)) = PeerAddr::decode(&info.observed) else {
             return;
         };
-        let ip = addr.socket().ip();
+        let Some(ip) = addr.socket().map(|socket| socket.ip()) else {
+            return;
+        };
         if ip.is_unspecified() {
             return;
         }
@@ -153,6 +303,13 @@ impl NetState {
             _ => None,
         };
         let mut link = link_with_hint(repo, self.listen, self.node_id, host.as_deref());
+        // Behind a proxy our own addresses stay out of links, unless the
+        // user names one with `advertise`.
+        let advertised = std::env::var("SWARM_ADVERTISE").is_ok_and(|value| !value.is_empty());
+        if self.settings.proxied() && !advertised {
+            link.hints.clear();
+        }
+        link.hints.extend(self.onion_hint());
         // REL-8: a node reached through a relay says so in its link.
         link.hints.extend(self.relay_hints());
         link
@@ -220,6 +377,13 @@ impl NetState {
         id
     }
 
+    /// Close every session that shares `repo`, for a repo that is going away.
+    pub fn close_sessions(&self, repo: RepoId) {
+        for handle in self.sessions_for(repo) {
+            handle.close();
+        }
+    }
+
     /// Remove a session.
     pub fn unregister(&self, id: u64) {
         let mut sessions = self
@@ -251,6 +415,26 @@ impl NetState {
             let message = swarm_net::Message::Announce {
                 repo_ix: ix,
                 envelope: envelope.clone(),
+            };
+            let _ = handle.send(&message).await;
+        }
+    }
+
+    /// Send a new name and description to every session that shares `repo`
+    /// and understands it.
+    pub async fn announce_about(&self, repo: RepoId, record: Vec<u8>) {
+        for handle in self.sessions_for(repo) {
+            let capable = handle
+                .info()
+                .caps
+                .iter()
+                .any(|cap| cap == swarm_net::message::ABOUT_CAP);
+            let Some(repo_ix) = handle.shared_repo(repo).filter(|_| capable) else {
+                continue;
+            };
+            let message = swarm_net::Message::AnnounceAbout {
+                repo_ix,
+                record: record.clone(),
             };
             let _ = handle.send(&message).await;
         }
@@ -308,7 +492,10 @@ pub fn configured_listen() -> SocketAddr {
     std::env::var("SWARM_LISTEN")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 42424))
+        .unwrap_or_else(|| {
+            let proxied = !matches!(swarm_net::Proxy::from_env(), Ok(None));
+            settings::Settings::default_listen(proxied)
+        })
 }
 
 /// Largest served or accepted pack, with a test override.
@@ -381,6 +568,10 @@ pub fn advertise_host(listen: SocketAddr) -> String {
 }
 
 pub(crate) fn primary_ipv4() -> Option<Ipv4Addr> {
+    // No packet is sent here, but behind a proxy we do not look at all.
+    if !matches!(swarm_net::Proxy::from_env(), Ok(None)) {
+        return None;
+    }
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("1.1.1.1:80").ok()?;
     match socket.local_addr().ok()?.ip() {

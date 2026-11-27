@@ -4,11 +4,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod bans;
 pub mod config;
 pub mod db;
 pub mod git;
 pub mod home;
 pub mod keyio;
+pub mod relaydb;
 pub mod store;
 
 use swarm_core::error::ErrorCode;

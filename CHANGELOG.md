@@ -6,6 +6,122 @@ All notable changes to Swarmgit are recorded here.
 
 ### Added
 
+- `swarm status repos`, `swarm status relays` and `swarm status peers`.
+  `swarm status <repo>` shows one repo in detail.
+- `swarm daemon start` and `swarm daemon restart`.
+- `swarm inspect <link>` reads and verifies a repo's signed metadata without
+  downloading Git objects (`--json`, `--progress`).
+- `swarm discover-relays` lists the public relays found through the DHT and
+  gossip (`--json`).
+- A release workflow: a `vX.Y.Z` tag is tested, packaged and published as a
+  GitHub release.
+- Relays found by discovery are shown, and put into share links, by their
+  domain name when they give one that resolves to the address that was dialed.
+  `swarm status` shows `name:port (IP)`. The relay needs this version and a
+  `--name` that is a domain.
+- `swarm about <repo> --name ... --description ...` sets a repo's name and
+  description with the root key or a maintainer's key. `swarm inspect` shows
+  them, as `name` and `description` in `--json`. Peers need this version to
+  carry them.
+
+### Changed
+
+- `swarm status` prints aligned tables on stdout, not lines on stderr.
+  Scripts that match the text should use `--json`.
+- `swarm daemon` on its own prints help instead of starting the daemon.
+  Other commands still start it when needed.
+- `swarm daemon stop` returns once the daemon has exited.
+- `swarm status` shows `seeders`, this machine if seeding plus the other nodes
+  that returned the repo at the last background check, instead of `peers`, the size of the address cache.
+  In `--json`, `peers` is replaced by `seeders`, `checked_secs_ago` and
+  `checking`.
+- The background check covers up to 8 repos at once.
+- `seeding` is true only while the repo's files are on disk.
+- A repo whose store was deleted from disk shows `seeding failed: files
+  missing` and is no longer seeded or downloaded again.
+- Link-local addresses learned from other peers are no longer remembered.
+- `swarm purge` keeps the signing key unless you agree to delete it, or pass
+  `--delete-key`.
+- `swarm status` reports project folders that have been deleted.
+
+### Fixed
+
+- Repo topics are published again after a relay restarts. A node with one relay could be
+  unfindable by repo ID for up to 20 minutes.
+
+## Relay completion (R3 to R6), onion and UDP fallback
+
+### Added
+
+- Relays find each other and clients find relays through the DHT and gossip
+  (R3). A node can be reached by node ID alone. `relay_discovery` turns it off.
+- Relay quotas, `--allow-node`, `--password-file`, `--metrics`,
+  `--no-network`, packaging, and `swarm relay` (R4).
+- Encrypted relay control channel; `host:port#key` addresses pin the relay,
+  and a password is sent only to such an address (R5). `relay_password`.
+- Rendezvous topics: a seeder behind NAT is found from a repo ID (R6).
+- `relay_max_bytes`, configurable onion connection limits, `swarm purge`.
+- `tests/e2e/punch.sh`: UDP punching through two NATs, with fallback to the
+  relay for symmetric NAT, blocked UDP and a path cut mid-transfer.
+
+### Changed
+
+- A download that fails on a punched UDP path carries on over the relay.
+- A transfer cut off in a relay names the relay.
+- `scripts/ci.sh` also runs the m6, m7, m8 and punch tests.
+
+### Fixed
+
+- A push could be silently undone: a sync running at the same time wrote its
+  older copy of the manifest back over the new one.
+- An announce could be copied back and forth between peers without end,
+  keeping every daemon busy and stalling syncs for tens of seconds.
+- When two peers sent a request at the same moment, one request could be
+  taken as the answer to the other, failing the sync.
+- UDP punching was skipped for relays named by hostname.
+- An onion name could be handed to DNS when no proxy was set.
+
+### Tests
+
+```bash
+scripts/ci.sh
+cargo test -p swarm-relay
+cargo test -p swarm-net --test handshake
+cargo test -p swarm-store
+# root, in the privileged dev container:
+tests/e2e/relaynet.sh && tests/e2e/punch.sh
+tests/e2e/relay.sh && tests/e2e/swarm5.sh     # from the host
+```
+
+## M9 - hardening and reach (2026-11-26)
+
+### Added
+
+- SOCKS5 outbound for every connection (`proxy` / `SWARM_PROXY`), with names
+  resolved by the proxy. LAN, DHT, UPnP and UDP punching are off behind it.
+- `onion:` link hints, and onion service hosting through the Tor control port
+  (`onion_control`, `onion_password`), with its own connection limits
+  (`onion_max_connections`, `onion_max_per_minute`).
+- `ObfsTransport` and the `obfs` setting: randomised handshake sizes and
+  timing, variable frame sizes.
+- Persisted ban list (schema version 2), per-address connection rate limit and
+  `upload_kbps`.
+- Experimental UDP hole punching (`--experimental-udp`), coordinated over a
+  relayed session; relays answer UDP address reflection on their port.
+- `message_decode` fuzz target, `scripts/fuzz.sh` and a fuzzing workflow
+  (60 s per target on push, 10 minutes nightly).
+- Tor guide (`docs/TOR-GUIDE.md`), systemd and launchd examples (`contrib/`).
+
+### Tests
+
+```bash
+scripts/ci.sh                 # includes tests/e2e/m9.sh
+cargo test -p swarm-net --test shaping
+scripts/fuzz.sh               # FUZZ_SECONDS=600 by default
+```
+
+### Added
+
 - `tests/e2e/swarm5.sh` with `compose.swarm5.yaml`: five containers (2 relays,
   3 peers on isolated networks) covering clone/fetch/push, failover, bundles,
   maintainers, mirrors, recovery and error cases (78 checks).

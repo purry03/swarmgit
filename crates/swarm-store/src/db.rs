@@ -1,4 +1,5 @@
-//! Sqlite metadata, schema version 1 (spec section 9.4).
+//! Sqlite metadata (spec section 9.4). Version 1 is below; later versions are
+//! forward migrations on top of it.
 
 use std::path::Path;
 
@@ -80,7 +81,7 @@ pub struct PeerRow {
 
 /// A sqlite handle. Callers serialize access with a mutex.
 pub struct Db {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 fn blob32(bytes: &[u8]) -> Result<[u8; 32], StoreError> {
@@ -102,13 +103,22 @@ impl Db {
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
         let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 0 {
-            conn.execute_batch(SCHEMA)?;
-        } else if version != 1 {
+        if !(0..=crate::bans::SCHEMA_VERSION).contains(&version) {
             return Err(StoreError::Message(format!(
                 "unsupported database schema version {version}"
             )));
         }
+        if version == 0 {
+            conn.execute_batch(SCHEMA)?;
+        }
+        if version < crate::bans::SCHEMA_VERSION {
+            conn.execute_batch(crate::bans::MIGRATION_2)?;
+        }
+        // Added without a version bump: older binaries ignore it.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS workdirs(
+               repo BLOB NOT NULL, path TEXT NOT NULL, PRIMARY KEY(repo, path));",
+        )?;
         Ok(Self { conn })
     }
 
@@ -191,6 +201,20 @@ impl Db {
             "UPDATE repos SET seeding = ?2 WHERE id = ?1",
             params![&id.as_bytes()[..], i64::from(seeding)],
         )?;
+        Ok(())
+    }
+
+    /// Delete everything recorded about a repo (SEC-13).
+    pub fn forget_repo(&self, id: RepoId) -> Result<(), StoreError> {
+        for statement in [
+            "DELETE FROM signers WHERE repo = ?1",
+            "DELETE FROM equivocations WHERE repo = ?1",
+            "DELETE FROM peers WHERE repo = ?1",
+            "DELETE FROM workdirs WHERE repo = ?1",
+            "DELETE FROM repos WHERE id = ?1",
+        ] {
+            self.conn.execute(statement, params![&id.as_bytes()[..]])?;
+        }
         Ok(())
     }
 
@@ -306,6 +330,24 @@ impl Db {
             });
         }
         Ok(out)
+    }
+
+    /// Remember a git directory on this machine that uses the repo.
+    pub fn record_workdir(&self, repo: RepoId, path: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO workdirs(repo, path) VALUES(?1, ?2)",
+            params![&repo.as_bytes()[..], path],
+        )?;
+        Ok(())
+    }
+
+    /// Git directories recorded for a repo.
+    pub fn workdirs(&self, repo: RepoId) -> Result<Vec<String>, StoreError> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT path FROM workdirs WHERE repo = ?1 ORDER BY path")?;
+        let rows = statement.query_map(params![&repo.as_bytes()[..]], |row| row.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Number of cached peers for a repo.

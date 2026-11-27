@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
+use swarm_core::about::{verify_about, VerifiedAbout};
 use swarm_core::accept::{AcceptState, StoredManifest};
 use swarm_core::ids::{Oid, RepoId};
 use swarm_core::keyfile::{RepoKey, REPO_KEY_FILE_LEN};
@@ -93,11 +95,73 @@ impl RepoStore {
         self.store_path().is_dir()
     }
 
-    /// Write the latest envelope for a signer atomically.
+    /// Write the latest envelope for a signer atomically. A newer one on
+    /// disk stays: a sync holds its state across the network, and a push
+    /// may publish in the meantime.
     pub fn write_manifest(&self, stored: &StoredManifest) -> Result<(), StoreError> {
+        static WRITING: Mutex<()> = Mutex::new(());
         let signer = hex::encode(stored.manifest.signer);
         let path = self.manifests_dir().join(format!("{signer}.cbor"));
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(on_disk) = fs::read(&path) {
+            if on_disk == stored.envelope
+                || verify_envelope(&on_disk)
+                    .is_ok_and(|on_disk| on_disk.manifest.seq > stored.manifest.seq)
+            {
+                return Ok(());
+            }
+        }
         keyio::write_private_replace(&path, &stored.envelope)
+    }
+
+    /// Path of the signed name and description record.
+    #[must_use]
+    pub fn about_path(&self) -> PathBuf {
+        self.dir().join("about.cbor")
+    }
+
+    /// The stored name and description, when their signer may still set them
+    /// according to `state`.
+    #[must_use]
+    pub fn load_about(&self, state: &AcceptState, now: u64) -> Option<VerifiedAbout> {
+        let bytes = fs::read(self.about_path()).ok()?;
+        verify_about(&bytes)
+            .ok()
+            .filter(|about| about.is_valid_for(state, now))
+    }
+
+    /// Store `about` if its signer may set it and it supersedes the stored
+    /// record. Returns true when it was written.
+    pub fn write_about(
+        &self,
+        about: &VerifiedAbout,
+        state: &AcceptState,
+        now: u64,
+    ) -> Result<bool, StoreError> {
+        static WRITING: Mutex<()> = Mutex::new(());
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let newer = self
+            .load_about(state, now)
+            .is_none_or(|old| about.supersedes(&old));
+        if !newer || !about.is_valid_for(state, now) {
+            return Ok(false);
+        }
+        keyio::write_private_replace(&self.about_path(), &about.bytes)?;
+        Ok(true)
+    }
+
+    /// Take into `state` every manifest on disk that is newer than its own.
+    pub fn adopt_newer(&self, state: &mut AcceptState) -> Result<(), StoreError> {
+        for (signer, on_disk) in self.load_state()?.signers {
+            let older = state
+                .signers
+                .get(&signer)
+                .is_none_or(|mine| mine.manifest.seq < on_disk.manifest.seq);
+            if older {
+                state.signers.insert(signer, on_disk);
+            }
+        }
+        Ok(())
     }
 
     /// Write every accepted manifest to disk (5.4 step 8).
@@ -319,5 +383,50 @@ mod tests {
         assert!(store.has_key());
         let loaded = store.load_key().unwrap().unwrap();
         assert_eq!(loaded.suite(), 1);
+    }
+
+    #[test]
+    fn an_older_state_never_replaces_a_newer_manifest() {
+        use swarm_core::pq::{HybridSigner, Signer};
+
+        let signer = HybridSigner::generate().unwrap();
+        let repo = swarm_core::crypto::repo_id(&signer.bundle());
+        let key = *swarm_core::crypto::key_id(&signer.bundle()).as_bytes();
+        let signed = |seq: u64, prev: [u8; 32]| {
+            let manifest = swarm_core::manifest::Manifest {
+                version: 1,
+                repo_id: *repo.as_bytes(),
+                signer: key,
+                seq,
+                prev,
+                ts: 1,
+                refs: BTreeMap::new(),
+                head: None,
+                maintainers: None,
+                object_format: Some("sha1".into()),
+                tombstones: None,
+                forked_from: None,
+                recovery: None,
+                new_root: None,
+                signer_keys: signer.bundle(),
+                suite: u64::from(signer.suite()),
+            };
+            StoredManifest::from(manifest.sign(&signer).unwrap())
+        };
+        let old = signed(1, [0; 32]);
+        let new = signed(2, old.manifest_id);
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = RepoStore::new(Home::from_root(dir.path()), repo);
+        fs::create_dir_all(store.manifests_dir()).unwrap();
+        store.write_manifest(&old).unwrap();
+        let mut stale = store.load_state().unwrap();
+        store.write_manifest(&new).unwrap();
+        store.persist_state(&stale).unwrap();
+        store.adopt_newer(&mut stale).unwrap();
+        for state in [store.load_state().unwrap(), stale] {
+            let seqs: Vec<u64> = state.signers.values().map(|s| s.manifest.seq).collect();
+            assert_eq!(seqs, [2]);
+        }
     }
 }

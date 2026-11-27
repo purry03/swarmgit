@@ -123,7 +123,7 @@ SEQ_A=$(seq_of "$A_HOME")
 echo "== S comes back serving the old seq"
 cd "$WORK/s-seed"
 env SWARM_HOME=$S_HOME SWARM_LISTEN=127.0.0.1:$PORT_S SWARM_NO_DHT=1 \
-    swarm daemon >/dev/null
+    swarm daemon start >/dev/null
 for _ in $(seq 1 50); do
     [[ -f $S_HOME/daemon.json ]] && break
     sleep 0.1

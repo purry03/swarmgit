@@ -268,6 +268,11 @@ prevent direct inbound connections. The regular encrypted peer session runs
 through it, but the relay sees connection metadata. Client-side configuration
 and cloning notes are in the Configuration section; for server installation,
 capacity, security, and operations, see [the relay guide](RELAY-GUIDE.md).
+With `relay_discovery` on (the default) a node that cannot be reached also
+finds public relays through the DHT, and peers find it by node ID or repo ID,
+with no relay in the link. A discovered relay is shown, and put into links, by
+its domain name when it gives one that resolves to the address dialed.
+`swarm relay` runs a relay server.
 
 **Storage.** `swarm gc <repo>` repacks a repo's object store. It keeps every
 object reachable from a stored manifest, and fails with `busy` while a sync or
@@ -277,10 +282,12 @@ upload of that repo is running; run it again a moment later.
 
 Settings can live in YAML files instead of environment variables. The `.deb`
 and `.rpm` install a commented example at `/etc/swarmgit/config.yaml`
-(`docs/config.example.yaml` in the source tree). A per-user file at
-`~/.config/swarmgit/config.yaml` overrides the system file. If `SWARM_CONFIG`
-is set, Swarmgit reads that specific file instead; it must exist. Environment
-variables take precedence over values from any config file.
+(`docs/config.example.yaml` in the source tree). Swarmgit reads both that
+system file and, when present, `~/.config/swarmgit/config.yaml`, merging them
+setting by setting; the user file wins when both define the same setting.
+Unset settings in the user file still come from the system file. If
+`SWARM_CONFIG` is set, Swarmgit reads only that specific file instead; it must
+exist. Environment variables take precedence over values from either file.
 
 ```yaml
 listen: 0.0.0.0:42424
@@ -301,9 +308,12 @@ YAML. Unknown keys are reported and ignored.
 | `home` | `SWARM_HOME` | Data directory. Defaults to the platform data directory. |
 | `listen` | `SWARM_LISTEN` | Peer listen address, default `0.0.0.0:42424`. If busy, the port becomes ephemeral. |
 | `advertise` | `SWARM_ADVERTISE` | Host name or IP placed in `swarm link` hints. Set this behind NAT or in Docker. |
-| `relays` | `SWARM_RELAYS` | Relays to register with or dial through; at most two are used. |
+| `relays` | `SWARM_RELAYS` | Relays to register with or dial through. |
 | `relay_mode` | `SWARM_RELAY_MODE` | `auto` (default), `always`, or `off`. |
 | `relay_delay_ms` | `SWARM_RELAY_DELAY_MS` | Relay fallback delay when a direct address is also available; default `1500`. |
+| `relay_discovery` | `SWARM_RELAY_DISCOVERY` | `on` (default) or `off`: find public relays through the DHT and gossip. |
+| `relay_password` | `SWARM_RELAY_PASSWORD` | Secret for a private relay. Sent only to relays listed as `host:port#key`. |
+| `relay_max_bytes` | `SWARM_RELAY_MAX_BYTES` | Most bytes one session moves through a relay, default 2 GiB. |
 | `lan` | `SWARM_NO_LAN` | Enable or disable LAN discovery. Environment value `1` disables it. |
 | `lan_port` | `SWARM_LAN_PORT` | LAN discovery UDP port, default `42099`. |
 | `dht` | `SWARM_NO_DHT` | Enable or disable Mainline DHT discovery. Environment value `1` disables it. |
@@ -316,9 +326,57 @@ YAML. Unknown keys are reported and ignored.
 | `idle_exit_minutes` | `SWARM_IDLE_EXIT_MINUTES` | Idle shutdown for an unseeded daemon, default 30. |
 | `log` | `SWARM_LOG` | Tracing filter, default `info`. |
 | `mirrors` | `SWARM_MIRRORS` | Static mirror base URLs. |
+| `upload_kbps` | `SWARM_UPLOAD_KBPS` | Upload cap in kilobits per second, shared by all peers; `0` (default) is unlimited. |
+| `proxy` | `SWARM_PROXY` | SOCKS5 proxy for every outbound connection, see the [Tor guide](TOR-GUIDE.md). |
+| `onion_control` | `SWARM_ONION_CONTROL` | Tor control port; hosts an onion service. |
+| `onion_password` | `SWARM_ONION_PASSWORD` | Control port password, when Tor does not use cookie auth. |
+| `onion_max_connections` | `SWARM_ONION_MAX_CONNECTIONS` | Onion visitors connected at once, default 16. |
+| `onion_max_per_minute` | `SWARM_ONION_MAX_PER_MINUTE` | New onion connections per minute, default 120. |
+| `obfs` | `SWARM_OBFS` | Randomise handshake sizes, timing and frame sizes. Off by default. |
+| `experimental_udp` | `SWARM_EXPERIMENTAL_UDP` | Try a direct UDP path between relayed peers (also `swarm daemon start --experimental-udp`). |
 
 `$SWARM_HOME/daemon.json` records the actual port, PID and listen address. The
-daemon starts on demand and stops with `swarm daemon stop`.
+daemon starts on demand, so you rarely start it yourself:
+
+```bash
+swarm daemon start      # start it in the background
+swarm daemon stop       # stop it and wait until it has exited
+swarm daemon restart    # apply changed settings
+```
+
+`swarm daemon` on its own only prints help. `--foreground` runs it in the
+terminal, for service managers; manage such a service with `systemctl` or
+`launchctl`, not with `swarm daemon restart`.
+
+### Tor, obfuscation, limits and UDP
+
+**Proxy and onion services.** Set `proxy` to send every connection through
+SOCKS5, and `onion_control` to be reachable as an onion service. The
+[Tor guide](TOR-GUIDE.md) covers both.
+
+**Obfuscation.** `obfs: true` pads the handshake with random bytes, adds small
+random delays and varies frame sizes, so the first packets have no fixed shape.
+Nodes with and without it talk to each other. It does not disguise Swarmgit as
+another protocol.
+
+**Inbound limits.** The daemon accepts 64 connections at once, 4 from one
+address, and 60 new ones a minute from one address. An address that breaks the
+protocol 3 times is ignored for 10 minutes, also across restarts. Connections
+from this machine are never banned.
+
+**UDP hole punching (experimental).** With `experimental_udp` on at both ends,
+two peers that met through a relay try to open a direct UDP path and move to
+it. If that fails the relayed connection carries on, also when the path breaks
+in the middle of a download. It is IPv4 only, has no congestion control and
+fails on symmetric NATs, which then use the relay. It is never used behind a
+proxy. The relay must have its UDP port (the same number as its TCP port)
+open.
+
+**Running as a service.** To seed continuously, use
+[`contrib/systemd/swarmgit.service`](../contrib/systemd/swarmgit.service) on
+Linux or
+[`contrib/launchd/org.swarmgit.daemon.plist`](../contrib/launchd/org.swarmgit.daemon.plist)
+on macOS. Each file explains how to install it.
 
 ## 9a. Bundles, maintainers, mirrors and recovery
 
@@ -338,7 +396,7 @@ ref globs; a publish outside those globs is rejected (`out_of_scope`).
 swarm key new <repo>                      # on the maintainer's machine; prints its key ID
 swarm maintainers add <repo> <key-id> 'refs/heads/feature/**'   # on the root
 swarm maintainers list <repo>
-swarm accept <repo> <ref> <oid>           # settle a conflict locally
+swarm accept <repo> <ref> <signer>        # settle a conflict locally with that key's value
 ```
 
 **Static mirrors** are plain web hosts. They only move bytes; everything is
@@ -365,22 +423,70 @@ swarm key rotate <repo> --recovery recovery.key   # later, on any machine holdin
 Rotation installs a new root key. Manifests from the old root are rejected
 afterwards. The repo ID never changes.
 
+### Name and description
+
+The owner or a maintainer can name a repo:
+
+```sh
+swarm about <repo> --name "my project" --description "what it is"
+swarm about <repo>          # show them
+```
+
+`swarm inspect` and the web explorer show them. The name is at most 64 bytes
+and the description 512 bytes, each on one line; `--name ""` removes it. They
+are stored signed in `repos/<repo-id>/about.cbor` under the Swarmgit home.
+Other peers pick them up from a connected peer or on their next sync. Bundles,
+mirrors and forks do not carry them.
+
+### Looking without cloning
+
+`swarm inspect <link>` fetches a repo's signed metadata from a peer and checks
+it, without downloading any Git objects. It prints the name and description if
+set, then the sequence number and the number of refs and peers. `--json` adds
+the refs, `HEAD`, object format and peer node IDs; `--progress` also streams
+the lookup steps as JSON lines.
+
+`swarm discover-relays` lists the public relays it can find through the DHT and
+relay gossip, by domain name and address where a relay gives one. It does not
+need the daemon or a configured relay.
+
 ## 9. CLI summary
 
 ```text
 swarm init [--object-format sha1|sha256] [--json]
 swarm link [--json] [repo]
+swarm about <repo> [--name TEXT] [--description TEXT] [--json]
 swarm status [--json] [repo]
+swarm status repos [repo] | relays | peers [repo]  [--json]
+swarm inspect <link> [--json] [--progress]
+swarm discover-relays [--json]
 swarm seed <link> [--json]
 swarm unseed <link> [--json]
 swarm fork <link> [--json]
-swarm key backup <repo> -o FILE
+swarm export <repo> -o FILE [--json]
+swarm import <file> [--json]
+swarm mirror export <repo> <dir>
+swarm maintainers add <repo> <key-id> [glob...] | remove <repo> <key-id> | list <repo>
+swarm accept <repo> <ref> <signer>
+swarm key new <repo> | id <repo> | backup <repo> -o FILE
+swarm key recovery <repo> -o FILE | rotate <repo> --recovery FILE
+swarm completions bash|zsh|fish|elvish|powershell
 swarm gc [--json] <repo>
-swarm daemon [--foreground] | daemon stop
+swarm purge <repo> [--yes] [--delete-key] [--json]
+swarm relay [options]
+swarm daemon start | stop | restart  [--experimental-udp]
+swarm daemon --foreground [--experimental-udp]
 ```
 
 `swarm gc` repacks a repo's object store and keeps every object reachable from
 a stored manifest. It fails with `busy` while a sync or upload is running.
+
+`swarm purge` removes a repo from the daemon and deletes its store on this
+machine. It asks before deleting unless you pass `--yes`. If you hold the
+repo's signing key, it asks separately whether to delete that too and keeps it
+by default; `--yes` always keeps it unless you also pass `--delete-key`. A
+deleted key cannot be recreated, so run `swarm key backup` first. Other peers
+keep their copies.
 
 `repo` accepts a base32 repo ID, hex, or a full `swarm://` link. When omitted,
 `swarm` uses the `swarm` remote of the current git repository, or the only
@@ -406,7 +512,7 @@ use a relay: run `swarm-relay` on a public host, set
 `relays` in the seeder's `/etc/swarmgit/config.yaml` (or set `SWARM_RELAYS`),
 then clone with the link that `swarm link` prints afterwards (it contains the
 `h=relay:` hint). Check
-`swarm status` says `relay ... registered`. A `no_peers` error that says
+`swarm status relays` says `registered`. A `no_peers` error that says
 "through a relay" means the relay was tried but the seeder is not registered
 with it or is offline.
 
@@ -438,6 +544,24 @@ also creates a repo you can push to.
 
 **`git pull` says divergent branches** — add `--no-rebase`, or fetch and merge
 `--ff-only` as above.
+
+**Reading `swarm status`** — it shows the daemon, a table of repos and the
+relays, where `name:port (IP)` is a relay with a domain name.
+`swarm status <repo>` shows one repo with its link and root key.
+`swarm status peers` lists, for each repo, the addresses the daemon remembers:
+`connected` has an open session now, `failing (n)` failed the last `n` tries,
+and `idle` is neither. In the repo table, `SEEDING` is yes when this machine has the repo
+on disk and serves it. `seeders` counts this machine, if seeding, plus the
+other nodes that returned the repo at the last check, which runs shortly after the daemon starts
+and every 5 minutes for seeded repos. `checking` means the first check is still running, and `?` that none has
+started. `CHECKED` is the age of that count. The daemon
+keeps its own copy of each repo, so deleting a working folder does not remove it
+from the list; use `swarm unseed` or `swarm purge`. `seeding failed: files missing`
+(state `files missing`) means that copy is gone: the daemon stops seeding it until you run `swarm seed`.
+
+`project folder deleted: <path>` means every folder known to use the repo is
+gone; it is still seeded. A folder becomes known on `swarm init`, or when you
+clone, fetch new objects or push from it.
 
 **Start clean** — `docker compose -f compose.peers.yaml down -v` removes both
 state volumes.

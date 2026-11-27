@@ -1,6 +1,7 @@
 //! Three-phase handshake (spec sections NET-1 to NET-12).
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use snow::params::NoiseParams;
@@ -18,6 +19,7 @@ use crate::addr::PeerAddr;
 use crate::error::NetError;
 use crate::frame::{FrameReader, FrameWriter, MAX_MESSAGE_BYTES};
 use crate::message::Message;
+use crate::transport::{Plain, Shaper};
 
 /// Noise parameters from NET-2.
 pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
@@ -60,7 +62,7 @@ impl PeerInfo {
 
 /// An established, authenticated and encrypted connection before the session
 /// actor takes it over.
-pub struct Transport {
+pub struct Established {
     /// Peer facts.
     pub info: PeerInfo,
     /// Decrypting half.
@@ -69,16 +71,32 @@ pub struct Transport {
     pub writer: FrameWriter<Box<dyn AsyncWrite + Unpin + Send>>,
 }
 
+/// Limits and shaping for one handshake. A bare [`Duration`] converts into
+/// options with that timeout and no shaping.
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// Time allowed for the whole handshake.
+    pub timeout: Duration,
+    /// Padding, timing and frame sizes.
+    pub shaper: Arc<dyn Shaper>,
+    /// Capabilities to name in `Hello` beside the standard ones.
+    pub extra_caps: Vec<String>,
+}
+
+impl From<Duration> for Options {
+    fn from(timeout: Duration) -> Self {
+        Self {
+            timeout,
+            shaper: Arc::new(Plain),
+            extra_caps: Vec::new(),
+        }
+    }
+}
+
 fn noise_params() -> Result<NoiseParams, NetError> {
     NOISE_PARAMS
         .parse()
         .map_err(|_| NetError::Noise("bad Noise parameters".into()))
-}
-
-fn random_pad() -> Vec<u8> {
-    let bytes = crypto::random_bytes::<256>().unwrap_or([0u8; 256]);
-    let len = usize::from(bytes[0]);
-    bytes[..len].to_vec()
 }
 
 async fn write_noise_frame<W: AsyncWrite + Unpin>(
@@ -93,8 +111,12 @@ async fn write_noise_frame<W: AsyncWrite + Unpin>(
     if len > MAX_NOISE_PAYLOAD {
         return Err(NetError::LimitExceeded("noise frame is too large".into()));
     }
-    writer.write_all(&(len as u16).to_be_bytes()).await?;
-    writer.write_all(&buffer[..len]).await?;
+    // Length and payload leave together, so the 2-byte prefix is never a
+    // packet of its own.
+    let mut frame = Vec::with_capacity(2 + len);
+    frame.extend_from_slice(&(len as u16).to_be_bytes());
+    frame.extend_from_slice(&buffer[..len]);
+    writer.write_all(&frame).await?;
     writer.flush().await?;
     Ok(())
 }
@@ -136,8 +158,10 @@ async fn write_transport_message<W: AsyncWrite + Unpin>(
         let len = state
             .write_message(&data[..take], &mut buffer)
             .map_err(|err| NetError::PqHandshake(err.to_string()))?;
-        writer.write_all(&(len as u16).to_be_bytes()).await?;
-        writer.write_all(&buffer[..len]).await?;
+        let mut frame = Vec::with_capacity(2 + len);
+        frame.extend_from_slice(&(len as u16).to_be_bytes());
+        frame.extend_from_slice(&buffer[..len]);
+        writer.write_all(&frame).await?;
         writer.flush().await?;
         data.drain(..take);
     }
@@ -223,7 +247,12 @@ fn verify_auth(
     Ok((node_id, bundle))
 }
 
-fn build_hello(local_repos: &[RepoId], hh: &[u8; 32], peer: &PeerAddr) -> Message {
+fn build_hello(
+    local_repos: &[RepoId],
+    hh: &[u8; 32],
+    peer: &PeerAddr,
+    extra_caps: &[String],
+) -> Message {
     let interests = local_repos
         .iter()
         .take(16)
@@ -231,7 +260,11 @@ fn build_hello(local_repos: &[RepoId], hh: &[u8; 32], peer: &PeerAddr) -> Messag
         .collect();
     Message::Hello {
         version: swarm_core::consts::PROTOCOL_VERSION,
-        caps: vec!["want".into(), "announce".into()],
+        caps: ["want", "announce", crate::message::ABOUT_CAP]
+            .into_iter()
+            .map(String::from)
+            .chain(extra_caps.iter().cloned())
+            .collect(),
         observed: peer.encode(None),
         interests,
     }
@@ -260,13 +293,23 @@ struct Builder3<'a> {
     local_repos: &'a [RepoId],
     peer: PeerAddr,
     pin: Option<NodeId>,
+    shaper: Arc<dyn Shaper>,
+    extra_caps: Vec<String>,
+}
+
+/// Wait as long as the shaper asks before the next handshake message.
+async fn pause(shaper: &dyn Shaper) {
+    let delay = shaper.delay();
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
 }
 
 async fn run_handshake<S>(
     stream: S,
     ctx: Builder3<'_>,
     initiator: bool,
-) -> Result<Transport, NetError>
+) -> Result<Established, NetError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -292,13 +335,19 @@ where
             .map_err(|err| NetError::Noise(err.to_string()))?
     };
 
-    let pad = random_pad();
+    let shaper = ctx.shaper.as_ref();
     if initiator {
+        pause(shaper).await;
+        let pad = shaper.opening_padding();
         write_noise_frame(&mut handshake, &mut write_half, &pad).await?;
         read_noise_frame(&mut handshake, &mut read_half).await?;
+        pause(shaper).await;
+        let pad = shaper.opening_padding();
         write_noise_frame(&mut handshake, &mut write_half, &pad).await?;
     } else {
         read_noise_frame(&mut handshake, &mut read_half).await?;
+        pause(shaper).await;
+        let pad = shaper.opening_padding();
         write_noise_frame(&mut handshake, &mut write_half, &pad).await?;
         read_noise_frame(&mut handshake, &mut read_half).await?;
     }
@@ -326,13 +375,14 @@ where
         ek = local_ek.0;
         r_i = crypto::random_bytes::<32>()
             .map_err(|_| NetError::PqHandshake("randomness unavailable".into()))?;
+        pause(shaper).await;
         write_transport_message(
             &mut phase_a,
             &mut write_half,
             &Message::PqInit {
                 ek: ek.clone(),
                 r_i,
-                pad: random_pad(),
+                pad: shaper.padding(),
             },
         )
         .await?;
@@ -381,13 +431,14 @@ where
         shared_secret = secret;
         r_r = crypto::random_bytes::<32>()
             .map_err(|_| NetError::PqHandshake("randomness unavailable".into()))?;
+        pause(shaper).await;
         write_transport_message(
             &mut phase_a,
             &mut write_half,
             &Message::PqResp {
                 ct: ct.clone(),
                 r_r,
-                pad: random_pad(),
+                pad: shaper.padding(),
             },
         )
         .await?;
@@ -401,7 +452,7 @@ where
     let boxed_read: Box<dyn AsyncRead + Unpin + Send> = Box::new(read_half);
     let boxed_write: Box<dyn AsyncWrite + Unpin + Send> = Box::new(write_half);
     let mut reader = FrameReader::new(boxed_read, &reader_key);
-    let mut writer = FrameWriter::new(boxed_write, &writer_key);
+    let mut writer = FrameWriter::new(boxed_write, &writer_key).shaped(Arc::clone(&ctx.shaper));
 
     let role = if initiator { 1u8 } else { 2u8 };
     let input = auth_input(role, &hh, &ek, &ct, &r_i, &r_r);
@@ -432,7 +483,7 @@ where
     let (node_id, peer_bundle) = verify_auth(peer_auth, peer_role, &transcript, ctx.pin)?;
 
     // Hello and interest matching, 7.2.
-    let hello = build_hello(ctx.local_repos, &hh, &ctx.peer);
+    let hello = build_hello(ctx.local_repos, &hh, &ctx.peer, &ctx.extra_caps);
     let encoded = hello.encode()?;
     writer.write_message(&encoded).await?;
     let peer_encoded = reader.read_message(MAX_MESSAGE_BYTES).await?;
@@ -475,7 +526,7 @@ where
     r_i.zeroize();
     r_r.zeroize();
 
-    Ok(Transport {
+    Ok(Established {
         info: PeerInfo {
             node_id,
             bundle: peer_bundle,
@@ -497,18 +548,21 @@ pub async fn connect<S>(
     local_repos: &[RepoId],
     pin: Option<NodeId>,
     peer: PeerAddr,
-    timeout: Duration,
-) -> Result<Transport, NetError>
+    options: impl Into<Options>,
+) -> Result<Established, NetError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let options = options.into();
     let ctx = Builder3 {
         key,
         local_repos,
         peer,
         pin,
+        shaper: options.shaper,
+        extra_caps: options.extra_caps,
     };
-    tokio::time::timeout(timeout, run_handshake(stream, ctx, true))
+    tokio::time::timeout(options.timeout, run_handshake(stream, ctx, true))
         .await
         .map_err(|_| NetError::Timeout("handshake timed out".into()))?
 }
@@ -519,18 +573,21 @@ pub async fn accept<S>(
     key: &NodeKey,
     local_repos: &[RepoId],
     peer: PeerAddr,
-    timeout: Duration,
-) -> Result<Transport, NetError>
+    options: impl Into<Options>,
+) -> Result<Established, NetError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let options = options.into();
     let ctx = Builder3 {
         key,
         local_repos,
         peer,
         pin: None,
+        shaper: options.shaper,
+        extra_caps: options.extra_caps,
     };
-    tokio::time::timeout(timeout, run_handshake(stream, ctx, false))
+    tokio::time::timeout(options.timeout, run_handshake(stream, ctx, false))
         .await
         .map_err(|_| NetError::Timeout("handshake timed out".into()))?
 }

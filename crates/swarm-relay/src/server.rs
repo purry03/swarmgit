@@ -1,69 +1,27 @@
 //! The relay server (design spec sections 4 and 7).
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use swarm_core::consts::SUITE_HYBRID;
-use swarm_core::crypto::{node_id, random_bytes, relay_auth_input};
-use swarm_core::pq;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::{TcpListener, TcpStream};
+use swarm_core::crypto::random_bytes;
+use swarm_net::udp;
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::proto::{read_msg, write_msg, Msg, Role, VERSION};
+pub use crate::config::{Limits, RelayConfig};
+use crate::directory::Directory;
+use crate::proto::{Msg, Role, VERSION};
+use crate::quota::{address_key, Quotas};
+use crate::secure::{Channel, Receiver, RelayKey, Sender};
+use crate::topics::Topics;
 use crate::RelayError;
-
-/// Resource limits (REL-5, REL-6, REL-19, REL-20). Per-IP and bandwidth limits
-/// arrive with milestone R4.
-#[derive(Clone, Debug)]
-pub struct Limits {
-    /// Most listeners registered at once.
-    pub max_listeners: usize,
-    /// Most splices running at once.
-    pub max_splices: usize,
-    /// Most connect requests waiting for an accept.
-    pub max_pending: usize,
-    /// A splice with no bytes in either direction this long is closed.
-    pub idle: Duration,
-    /// A control connection silent this long is closed.
-    pub control_silence: Duration,
-    /// How long a dialer waits for the listener to accept.
-    pub pending_ttl: Duration,
-    /// How long a new connection has to say what it wants.
-    pub hello_timeout: Duration,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            max_listeners: 10_000,
-            max_splices: 500,
-            max_pending: 1_000,
-            idle: Duration::from_secs(120),
-            control_silence: Duration::from_secs(75),
-            pending_ttl: Duration::from_secs(10),
-            hello_timeout: Duration::from_secs(10),
-        }
-    }
-}
-
-/// Relay configuration.
-#[derive(Clone, Debug, Default)]
-pub struct RelayConfig {
-    /// Names clients may dial this relay by, as `host:port`. A listener's
-    /// proof is bound to the name it dialed (REL-1). Empty means any name is
-    /// accepted, which gives up that binding and suits tests only.
-    pub names: Vec<String>,
-    /// Resource limits.
-    pub limits: Limits,
-}
 
 struct Entry {
     gen: u64,
+    ip: IpAddr,
     tx: mpsc::Sender<[u8; 16]>,
 }
 
@@ -74,26 +32,39 @@ struct Pending {
 
 /// Counters only; nothing identifying is kept (REL-7).
 #[derive(Default)]
-struct Counters {
-    splices_total: AtomicU64,
-    bytes: AtomicU64,
-    auth_failures: AtomicU64,
+pub(crate) struct Counters {
+    pub(crate) splices_total: AtomicU64,
+    pub(crate) bytes: AtomicU64,
+    pub(crate) auth_failures: AtomicU64,
+    errors: AtomicU64,
 }
 
-struct State {
-    config: RelayConfig,
+pub(crate) struct State {
+    pub(crate) config: RelayConfig,
     listeners: Mutex<HashMap<[u8; 32], Entry>>,
     pending: Mutex<HashMap<[u8; 16], Pending>>,
     next_gen: AtomicU64,
-    splices: AtomicUsize,
-    counters: Counters,
+    pub(crate) splices: AtomicUsize,
+    pub(crate) counters: Counters,
+    pub(crate) quotas: Arc<Quotas>,
     shutdown: watch::Sender<bool>,
+    pub(crate) topics: Topics,
+    /// The static key. Absent only if none could be made, which leaves
+    /// control connections in the clear.
+    pub(crate) key: Option<RelayKey>,
+    /// The public key, or random bytes without one. It identifies the relay
+    /// in the relay network.
+    pub(crate) relay_id: [u8; 32],
+    /// Set once the relay joins the relay network (REL-33).
+    pub(crate) network: OnceLock<Arc<Directory>>,
+    /// Recent dial-back checks by caller address.
+    pub(crate) dial_backs: Mutex<HashMap<IpAddr, Instant>>,
 }
 
 /// A relay. Cheap to clone.
 #[derive(Clone)]
 pub struct Relay {
-    state: Arc<State>,
+    pub(crate) state: Arc<State>,
 }
 
 /// A snapshot of relay counters.
@@ -107,30 +78,31 @@ pub struct Stats {
     pub splices_total: u64,
     /// Bytes copied since the relay began.
     pub bytes: u64,
-    /// Failed listener proofs.
+    /// Failed listener proofs and passwords.
     pub auth_failures: u64,
+    /// Connections that ended in an error, refusals included.
+    pub errors: u64,
 }
 
 /// Resolve once shutdown is requested.
-async fn stopped(rx: &mut watch::Receiver<bool>) {
+pub(crate) async fn stopped(rx: &mut watch::Receiver<bool>) {
     let _ = rx.wait_for(|stopped| *stopped).await;
 }
 
-async fn send_error(stream: &mut TcpStream, code: &str, msg: &str) {
-    let _ = write_msg(
-        stream,
-        &Msg::Error {
+pub(crate) async fn send_error(stream: &mut Channel, code: &str, msg: &str) {
+    let _ = stream
+        .send(&Msg::Error {
             code: code.into(),
             msg: msg.into(),
-        },
-    )
-    .await;
+        })
+        .await;
 }
 
 impl Relay {
     /// Create a relay.
     #[must_use]
     pub fn new(config: RelayConfig) -> Self {
+        let key = config.key.clone().or_else(|| RelayKey::generate().ok());
         Self {
             state: Arc::new(State {
                 config,
@@ -139,7 +111,17 @@ impl Relay {
                 next_gen: AtomicU64::new(1),
                 splices: AtomicUsize::new(0),
                 counters: Counters::default(),
+                quotas: Arc::new(Quotas::default()),
                 shutdown: watch::channel(false).0,
+                relay_id: key
+                    .as_ref()
+                    .map(RelayKey::public)
+                    .or_else(|| random_bytes::<32>().ok())
+                    .unwrap_or_default(),
+                key,
+                topics: Topics::default(),
+                network: OnceLock::new(),
+                dial_backs: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -153,7 +135,27 @@ impl Relay {
             splices_total: self.state.counters.splices_total.load(Ordering::SeqCst),
             bytes: self.state.counters.bytes.load(Ordering::SeqCst),
             auth_failures: self.state.counters.auth_failures.load(Ordering::SeqCst),
+            errors: self.state.counters.errors.load(Ordering::SeqCst),
         }
+    }
+
+    /// This process's identifier in the relay network.
+    #[must_use]
+    pub fn relay_id(&self) -> [u8; 32] {
+        self.state.relay_id
+    }
+
+    /// True when `node` has a live registration here.
+    pub(crate) fn has_listener(&self, node: &[u8; 32]) -> bool {
+        self.state
+            .listeners
+            .lock()
+            .is_ok_and(|listeners| listeners.contains_key(node))
+    }
+
+    /// A receiver that turns true on [`Relay::shutdown`].
+    pub(crate) fn stop_signal(&self) -> watch::Receiver<bool> {
+        self.state.shutdown.subscribe()
     }
 
     /// Stop accepting and drop every open connection. [`Relay::serve`]
@@ -165,6 +167,9 @@ impl Relay {
     /// Accept connections until [`Relay::shutdown`] is called or the task is
     /// dropped or aborted.
     pub async fn serve(&self, listener: TcpListener) {
+        if let Ok(addr) = listener.local_addr() {
+            self.start_reflector(addr).await;
+        }
         let mut stop = self.state.shutdown.subscribe();
         loop {
             let (stream, peer) = tokio::select! {
@@ -185,6 +190,7 @@ impl Relay {
                     () = stopped(&mut stop) => {}
                     outcome = relay.handle(stream, peer) => {
                         if let Err(err) = outcome {
+                            relay.state.counters.errors.fetch_add(1, Ordering::SeqCst);
                             tracing::debug!("relay connection {peer}: {err}");
                         }
                     }
@@ -193,62 +199,117 @@ impl Relay {
         }
     }
 
-    async fn handle(&self, mut stream: TcpStream, peer: SocketAddr) -> Result<(), RelayError> {
+    /// Answer UDP "what is my address" requests on the listening port, for
+    /// clients trying experimental hole punching. A reply is smaller than its
+    /// request, so this cannot amplify traffic. Without it the relay works as
+    /// before.
+    async fn start_reflector(&self, addr: SocketAddr) {
+        let socket = match UdpSocket::bind(addr).await {
+            Ok(socket) => socket,
+            Err(err) => {
+                tracing::warn!("no UDP reflector on {addr}: {err}");
+                return;
+            }
+        };
+        let mut stop = self.state.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 128];
+            loop {
+                let received = tokio::select! {
+                    () = stopped(&mut stop) => return,
+                    received = socket.recv_from(&mut buffer) => received,
+                };
+                let Ok((len, from)) = received else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                };
+                if let Some(reply) = udp::reflect_reply(&buffer[..len], from) {
+                    let _ = socket.send_to(&reply, from).await;
+                }
+            }
+        });
+    }
+
+    async fn handle(&self, stream: TcpStream, peer: SocketAddr) -> Result<(), RelayError> {
         let limits = &self.state.config.limits;
-        let hello = tokio::time::timeout(limits.hello_timeout, read_msg(&mut stream))
+        let first = async {
+            let mut channel = match &self.state.key {
+                Some(key) => Channel::respond(stream, key).await?,
+                None => Channel::plain(stream),
+            };
+            let hello = channel.recv().await?;
+            Ok::<_, RelayError>((channel, hello))
+        };
+        let (mut stream, hello) = tokio::time::timeout(limits.hello_timeout, first)
             .await
             .map_err(|_| RelayError::Timeout("hello"))??;
-        let Msg::Hello { version, role } = hello else {
-            send_error(&mut stream, "malformed", "expected RHello").await;
-            return Err(RelayError::Protocol("expected RHello".into()));
+        let (version, role, password) = match hello {
+            Msg::Hello { version, role } => (version, role, None),
+            Msg::HelloAuth {
+                version,
+                role,
+                password,
+            } => (version, role, Some(password)),
+            _ => {
+                send_error(&mut stream, "malformed", "expected RHello").await;
+                return Err(RelayError::Protocol("expected RHello".into()));
+            }
         };
         if version != VERSION {
             send_error(&mut stream, "unsupported_version", "version 1 only").await;
             return Err(RelayError::Protocol("unsupported version".into()));
         }
-        match role {
-            Role::Listen => self.listen_session(stream, peer).await,
-            Role::Connect => self.connect_session(stream).await,
-            Role::Accept => self.accept_session(stream).await,
-        }
-    }
-
-    async fn listen_session(
-        &self,
-        mut stream: TcpStream,
-        peer: SocketAddr,
-    ) -> Result<(), RelayError> {
-        let limits = self.state.config.limits.clone();
-        let nonce = random_bytes::<32>().map_err(|err| RelayError::Auth(err.to_string()))?;
-        write_msg(&mut stream, &Msg::Challenge { nonce }).await?;
-        let proof = tokio::time::timeout(limits.hello_timeout, read_msg(&mut stream))
-            .await
-            .map_err(|_| RelayError::Timeout("prove"))??;
-        let Msg::Prove { bundle, sig, name } = proof else {
-            send_error(&mut stream, "malformed", "expected Prove").await;
-            return Err(RelayError::Protocol("expected Prove".into()));
-        };
-        let names = &self.state.config.names;
-        let name_ok = names.is_empty() || names.contains(&name);
-        let signature_ok = name_ok
-            && bundle.len() == swarm_core::consts::SUITE1_BUNDLE_LEN
-            && sig.len() == swarm_core::consts::SUITE1_SIG_LEN
-            && pq::verify(
-                SUITE_HYBRID,
-                &bundle,
-                &relay_auth_input(&nonce, &name),
-                &sig,
-            )
-            .is_ok();
-        if !signature_ok {
+        // Only registering and dialing use the relay; accepting needs a
+        // token that one of those produced.
+        if matches!(role, Role::Listen | Role::Connect | Role::Publish)
+            && !self.password_ok(password.as_deref())
+        {
             self.state
                 .counters
                 .auth_failures
                 .fetch_add(1, Ordering::SeqCst);
-            send_error(&mut stream, "auth_failed", "proof rejected").await;
-            return Err(RelayError::Auth("proof rejected".into()));
+            send_error(&mut stream, "auth_failed", "this relay needs its password").await;
+            return Err(RelayError::Auth("wrong or missing password".into()));
         }
-        let node = *node_id(&bundle).as_bytes();
+        match role {
+            Role::Listen => self.listen_session(stream, peer).await,
+            Role::Connect => self.connect_session(stream, peer).await,
+            Role::Accept => self.accept_session(stream).await,
+            Role::Info => self.info_session(stream, peer).await,
+            Role::Publish => self.publish_session(stream, peer).await,
+        }
+    }
+
+    fn password_ok(&self, given: Option<&str>) -> bool {
+        match &self.state.config.password {
+            // Hash equality takes the same time wherever the two differ.
+            Some(wanted) => given.is_some_and(|given| {
+                blake3::hash(given.as_bytes()) == blake3::hash(wanted.as_bytes())
+            }),
+            None => true,
+        }
+    }
+
+    /// The address `peer` is counted under, unless it is spared.
+    pub(crate) fn counted(&self, peer: SocketAddr) -> Option<IpAddr> {
+        let spared =
+            peer.ip().to_canonical().is_loopback() && !self.state.config.limits.limit_loopback;
+        (!spared).then(|| address_key(peer.ip()))
+    }
+
+    async fn listen_session(
+        &self,
+        mut stream: Channel,
+        peer: SocketAddr,
+    ) -> Result<(), RelayError> {
+        let limits = self.state.config.limits.clone();
+        let node = self.prove(&mut stream).await?;
+
+        let allowed = &self.state.config.allow_nodes;
+        if !allowed.is_empty() && !allowed.contains(&node) {
+            send_error(&mut stream, "auth_failed", "node is not allowed here").await;
+            return Err(RelayError::Auth("node not on the allow list".into()));
+        }
 
         let gen = self.state.next_gen.fetch_add(1, Ordering::SeqCst);
         let (tx, mut incoming) = mpsc::channel::<[u8; 16]>(16);
@@ -258,12 +319,18 @@ impl Relay {
                 .listeners
                 .lock()
                 .map_err(|_| RelayError::Protocol("state poisoned".into()))?;
-            if !listeners.contains_key(&node) && listeners.len() >= limits.max_listeners {
+            let new = !listeners.contains_key(&node);
+            let crowded = self.counted(peer).is_some_and(|ip| {
+                let held = listeners.values().filter(|entry| entry.ip == ip).count();
+                held >= limits.listeners_per_ip
+            });
+            if new && (listeners.len() >= limits.max_listeners || crowded) {
                 false
             } else {
                 // REL-2: a newer control connection replaces the older one.
                 // The old entry's sender drops here, ending its control loop.
-                listeners.insert(node, Entry { gen, tx });
+                let ip = address_key(peer.ip());
+                listeners.insert(node, Entry { gen, ip, tx });
                 true
             }
         };
@@ -284,26 +351,24 @@ impl Relay {
 
     async fn control_loop(
         &self,
-        stream: TcpStream,
+        stream: Channel,
         peer: SocketAddr,
         incoming: &mut mpsc::Receiver<[u8; 16]>,
         silence: Duration,
     ) -> Result<(), RelayError> {
-        let (mut read_half, mut write_half) = stream.into_split();
-        write_msg(
-            &mut write_half,
-            &Msg::Listening {
+        let (mut read_half, mut write_half): (Receiver, Sender) = stream.into_split();
+        write_half
+            .send(&Msg::Listening {
                 ttl_secs: silence.as_secs(),
                 observed: peer.to_string(),
-            },
-        )
-        .await?;
+            })
+            .await?;
         // Frames are read by a task because `read_msg` is not cancel safe
         // inside `select!`.
         let (frame_tx, mut frames) = mpsc::channel::<Result<Msg, RelayError>>(8);
         let reader = tokio::spawn(async move {
             loop {
-                let msg = read_msg(&mut read_half).await;
+                let msg = read_half.recv().await;
                 let stop = msg.is_err();
                 if frame_tx.send(msg).await.is_err() || stop {
                     break;
@@ -319,7 +384,7 @@ impl Relay {
                 frame = frames.recv() => match frame {
                     Some(Ok(Msg::Ping { nonce })) => {
                         deadline = Instant::now() + silence;
-                        if let Err(err) = write_msg(&mut write_half, &Msg::Pong { nonce }).await {
+                        if let Err(err) = write_half.send(&Msg::Pong { nonce }).await {
                             break Err(err);
                         }
                     }
@@ -330,7 +395,7 @@ impl Relay {
                 },
                 token = incoming.recv() => match token {
                     Some(token) => {
-                        if let Err(err) = write_msg(&mut write_half, &Msg::Incoming { token }).await {
+                        if let Err(err) = write_half.send(&Msg::Incoming { token }).await {
                             break Err(err);
                         }
                     }
@@ -342,15 +407,41 @@ impl Relay {
         outcome
     }
 
-    async fn connect_session(&self, mut stream: TcpStream) -> Result<(), RelayError> {
+    async fn connect_session(
+        &self,
+        mut stream: Channel,
+        peer: SocketAddr,
+    ) -> Result<(), RelayError> {
         let limits = self.state.config.limits.clone();
-        let request = tokio::time::timeout(limits.hello_timeout, read_msg(&mut stream))
+        let request = tokio::time::timeout(limits.hello_timeout, stream.recv())
             .await
             .map_err(|_| RelayError::Timeout("connect"))??;
         let Msg::Connect { target } = request else {
             send_error(&mut stream, "malformed", "expected Connect").await;
             return Err(RelayError::Protocol("expected Connect".into()));
         };
+        let counted = self.counted(peer);
+        if let Some(ip) = counted {
+            if !self.state.quotas.connect(ip, limits.connects_per_minute) {
+                send_error(&mut stream, "limit_exceeded", "too many connects").await;
+                return Err(RelayError::Protocol("connect rate".into()));
+            }
+        }
+        // Held until the splice ends.
+        let _place = match counted {
+            Some(ip) => match self.state.quotas.splice(ip, limits.splices_per_ip) {
+                Some(place) => Some(place),
+                None => {
+                    send_error(&mut stream, "limit_exceeded", "too many open pipes").await;
+                    return Err(RelayError::Protocol("splices per address".into()));
+                }
+            },
+            None => None,
+        };
+        if !self.state.quotas.carry(target, 0, limits.node_daily_bytes) {
+            send_error(&mut stream, "limit_exceeded", "daily quota used up").await;
+            return Err(RelayError::Protocol("daily quota".into()));
+        }
         if self.state.splices.load(Ordering::SeqCst) >= limits.max_splices {
             send_error(&mut stream, "limit_exceeded", "relay is full").await;
             return Err(RelayError::Protocol("splice limit".into()));
@@ -403,8 +494,8 @@ impl Relay {
                 return Err(RelayError::Timeout("accept"));
             }
         };
-        write_msg(&mut stream, &Msg::Ready).await?;
-        self.splice(stream, acceptor).await;
+        stream.send(&Msg::Ready).await?;
+        self.splice(stream.into_raw(), acceptor, target).await;
         Ok(())
     }
 
@@ -414,9 +505,9 @@ impl Relay {
         }
     }
 
-    async fn accept_session(&self, mut stream: TcpStream) -> Result<(), RelayError> {
+    async fn accept_session(&self, mut stream: Channel) -> Result<(), RelayError> {
         let limits = &self.state.config.limits;
-        let request = tokio::time::timeout(limits.hello_timeout, read_msg(&mut stream))
+        let request = tokio::time::timeout(limits.hello_timeout, stream.recv())
             .await
             .map_err(|_| RelayError::Timeout("accept"))??;
         let Msg::Accept { token } = request else {
@@ -436,68 +527,9 @@ impl Relay {
         // The token only ever travelled over the authenticated control
         // connection of `node`, so holding it proves this is that node.
         let _ = node;
-        write_msg(&mut stream, &Msg::Ready).await?;
+        stream.send(&Msg::Ready).await?;
         // If the dialer already gave up, the stream is dropped and closes.
-        let _ = reply.send(stream);
+        let _ = reply.send(stream.into_raw());
         Ok(())
     }
-
-    async fn splice(&self, a: TcpStream, b: TcpStream) {
-        let state = &self.state;
-        state.splices.fetch_add(1, Ordering::SeqCst);
-        state.counters.splices_total.fetch_add(1, Ordering::SeqCst);
-        let (ar, aw) = a.into_split();
-        let (br, bw) = b.into_split();
-        let start = Instant::now();
-        let last = Arc::new(AtomicU64::new(0));
-        let idle = state.config.limits.idle;
-        let forward = async {
-            tokio::join!(
-                pump(ar, bw, &last, start, &state.counters.bytes),
-                pump(br, aw, &last, start, &state.counters.bytes)
-            )
-        };
-        let watchdog = async {
-            loop {
-                tokio::time::sleep(Duration::from_millis(500).min(idle)).await;
-                let since = u64::try_from(start.elapsed().as_millis())
-                    .unwrap_or(u64::MAX)
-                    .saturating_sub(last.load(Ordering::SeqCst));
-                if Duration::from_millis(since) >= idle {
-                    return;
-                }
-            }
-        };
-        tokio::select! {
-            _ = forward => {}
-            () = watchdog => {}
-        }
-        state.splices.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-/// Copy one direction, noting activity. Half-closes the writer at EOF.
-async fn pump(
-    mut reader: OwnedReadHalf,
-    mut writer: OwnedWriteHalf,
-    last: &AtomicU64,
-    start: Instant,
-    bytes: &AtomicU64,
-) {
-    let mut buffer = vec![0u8; 16 * 1024];
-    loop {
-        let read = match reader.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
-            Ok(read) => read,
-        };
-        if writer.write_all(&buffer[..read]).await.is_err() {
-            break;
-        }
-        bytes.fetch_add(read as u64, Ordering::Relaxed);
-        last.store(
-            u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-            Ordering::SeqCst,
-        );
-    }
-    let _ = writer.shutdown().await;
 }

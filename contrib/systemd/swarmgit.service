@@ -1,0 +1,27 @@
+# The Swarmgit daemon as a per-user service, for a machine that seeds repos
+# continuously.
+#
+#   cp swarmgit.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now swarmgit
+#   loginctl enable-linger "$USER"     # keep it running after logout
+#
+# Settings come from ~/.config/swarmgit/config.yaml.
+
+[Unit]
+Description=Swarmgit daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/swarm daemon --foreground
+# A service stays up even with nothing seeded yet.
+Environment=SWARM_IDLE_EXIT_MINUTES=0
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

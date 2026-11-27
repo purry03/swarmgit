@@ -42,9 +42,10 @@ slh-dsa = { version = "0.2.0-rc.5", features = ["alloc"] }
 subtle = "2"
 tempfile = "3"
 thiserror = "2"
+tokio-socks = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "process", "io-util", "io-std", "time", "signal", "sync", "macros"] }
 tracing = "0.1"
-ureq = "2"
+ureq = { version = "2", features = ["socks-proxy"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1"
 

@@ -186,3 +186,58 @@ async fn a_relay_that_terminates_the_connection_fails_a_target_pin() {
     assert_eq!(client.info.node_id, relay_key.node_id().unwrap());
     assert_eq!(relay.info.node_id, client_key.node_id().unwrap());
 }
+
+/// Both ends number their requests from 1. The other side's request, with
+/// the same number as ours, must not be taken as the answer to it.
+#[tokio::test]
+async fn two_sides_may_ask_each_other_at_once() {
+    let client_key = Arc::new(NodeKey::generate().unwrap());
+    let server_key = Arc::new(NodeKey::generate().unwrap());
+    let repo = RepoId::from_bytes([1u8; 32]);
+    let (client_io, server_io) = tokio::io::duplex(256 * 1024);
+    let server = {
+        let key = Arc::clone(&server_key);
+        tokio::spawn(async move {
+            handshake::accept(server_io, &key, &[repo], peer(), Duration::from_secs(10)).await
+        })
+    };
+    let client = handshake::connect(
+        client_io,
+        &client_key,
+        &[repo],
+        None,
+        peer(),
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    let mut server = Session::start(server.await.unwrap().unwrap());
+    let mut client = Session::start(client);
+    let ask = |session: &Session| {
+        let handle = session.handle();
+        tokio::spawn(async move {
+            handle
+                .request(
+                    Message::GetHeads { rid: 0, repo_ix: 0 },
+                    Duration::from_secs(5),
+                )
+                .await
+        })
+    };
+    let (from_client, from_server) = (ask(&client), ask(&server));
+    for session in [&mut server, &mut client] {
+        let request = session.recv_incoming().await.unwrap();
+        let Message::GetHeads { rid, .. } = request else {
+            panic!("expected the other side's request, got {request:?}");
+        };
+        let heads = Message::Heads {
+            rid,
+            envelopes: Vec::new(),
+        };
+        session.handle().send(&heads).await.unwrap();
+    }
+    for asked in [from_client, from_server] {
+        let reply = asked.await.unwrap().unwrap();
+        assert!(matches!(reply, Message::Heads { .. }), "{reply:?}");
+    }
+}

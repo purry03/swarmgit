@@ -18,6 +18,8 @@ clap_complete.workspace = true
 serde_json.workspace = true
 swarm-core = { path = "../swarm-core" }
 swarm-daemon = { path = "../swarm-daemon" }
+swarm-disc = { path = "../swarm-disc" }
+swarm-relay = { path = "../swarm-relay" }
 swarm-store = { path = "../swarm-store" }
 tokio.workspace = true
 tracing.workspace = true

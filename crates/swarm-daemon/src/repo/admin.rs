@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use swarm_core::accept::{AcceptState, StoredManifest};
 use swarm_core::consts::SUITE_HYBRID;
 use swarm_core::crypto::{key_id, repo_id};
-use swarm_core::ids::RepoId;
+use swarm_core::ids::{NodeId, RepoId};
 use swarm_core::keyfile::RepoKey;
 use swarm_core::manifest::Manifest;
 use swarm_store::git;
@@ -33,6 +33,34 @@ pub async fn repo_info(state: &DaemonState, args: &Value) -> Result<Value, IpcEr
     }))
 }
 
+/// `workdir`: a git directory on this machine fetched from or pushed to a repo.
+pub async fn record_workdir(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
+    let repo = parse_repo(arg_str(args, "repo")?)?;
+    let _ = db_repo(state, repo)?;
+    let path = arg_str(args, "path")?;
+    if !std::path::Path::new(path).is_absolute() {
+        return Err(IpcError::new("malformed", "path must be absolute"));
+    }
+    state
+        .db
+        .lock()
+        .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?
+        .record_workdir(repo, path)?;
+    Ok(json!({ "recorded": true }))
+}
+
+/// The recorded project folders, when there are some and none is left.
+pub(crate) fn deleted_workdirs(paths: &[String]) -> Option<Vec<&str>> {
+    // Only a definite "not found" counts, not an unreadable or odd path.
+    let gone = |path: &String| matches!(std::path::Path::new(path).try_exists(), Ok(false));
+    (!paths.is_empty() && paths.iter().all(gone)).then(|| {
+        paths
+            .iter()
+            .map(|path| path.strip_suffix("/.git").unwrap_or(path))
+            .collect()
+    })
+}
+
 fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, IpcError> {
     let store = RepoStore::new(state.home.clone(), row.id);
     let accepted = store.load_state()?;
@@ -42,11 +70,12 @@ fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, Ipc
             .db
             .lock()
             .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
-        let list = db.equivocations(row.id)?;
-        let peers = db.peer_count(row.id)?;
-        (list, peers)
+        (db.equivocations(row.id)?, db.workdirs(row.id)?)
     };
-    let (equivocations, peers) = equivocations;
+    let (equivocations, workdirs) = equivocations;
+    let seeders = state.net().and_then(|net| net.seeders(row.id));
+    // Only a repo whose files are here can be served.
+    let seeding = row.seeding && store.exists();
     let equivocations: Vec<Value> = equivocations
         .into_iter()
         .map(|item| {
@@ -66,8 +95,14 @@ fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, Ipc
         "root": accepted.root.to_base32(),
         "recovery": accepted.recovery.is_some(),
         "refs": resolved.canonical.len(),
-        "peers": peers,
-        "seeding": row.seeding,
+        // Every seeder known, this machine included.
+        "seeders": seeders.map(|(others, _)| others + usize::from(seeding)),
+        "checked_secs_ago": seeders.map(|(_, age)| age.as_secs()),
+        "checking": state.net().is_some_and(|net| net.is_checking(row.id)),
+        "on_disk": store.exists(),
+        "error": (!store.exists()).then_some("seeding failed: files missing"),
+        "deleted_folders": deleted_workdirs(&workdirs),
+        "seeding": seeding,
         "object_format": row.object_format,
         "conflicts": resolved.conflicts.keys().cloned().collect::<Vec<_>>(),
         "equivocations": equivocations,
@@ -104,13 +139,80 @@ pub async fn status(state: &DaemonState, args: &Value) -> Result<Value, IpcError
         .map(|relay| {
             json!({
                 "relay": relay.name,
+                "address": relay.addr.as_ref().map(ToString::to_string),
                 "registered": relay.registered,
                 "observed": relay.observed,
                 "error": relay.error,
             })
         })
         .collect();
-    Ok(json!({ "repos": repos, "lan": lan, "relays": relays }))
+    let network = state.net().map(|net| {
+        let onion = net.onion();
+        json!({
+            "proxy": net.settings.proxy.as_ref().map(|proxy| proxy.server.clone()),
+            "obfs": net.settings.obfs,
+            "experimental_udp": net.settings.experimental_udp,
+            "onion": onion.host,
+            "onion_error": onion.error,
+        })
+    });
+    Ok(json!({ "repos": repos, "lan": lan, "relays": relays, "network": network }))
+}
+
+/// `peers`: for one or all repos, the cached peer addresses and the open
+/// sessions.
+pub async fn peers(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
+    let rows = match args.get("repo").and_then(Value::as_str) {
+        Some(value) => vec![db_repo(state, parse_repo(value)?)?],
+        None => repo_rows(state)?,
+    };
+    let net = state.net();
+    let mut peers = Vec::new();
+    for row in &rows {
+        let repo = row.id.to_base32();
+        let cached = state
+            .db
+            .lock()
+            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?
+            .peers(row.id)?;
+        let mut connected: Vec<NodeId> = net
+            .map(|net| net.sessions_for(row.id))
+            .unwrap_or_default()
+            .iter()
+            .map(|session| session.info().node_id)
+            .collect();
+        connected.sort_by_key(|node| *node.as_bytes());
+        connected.dedup();
+        let relay_of = |node: NodeId| net.and_then(|net| net.relay_of(node));
+        let mut listed = Vec::new();
+        for peer in cached {
+            let node = peer.node_id.map(NodeId::from_bytes);
+            let open = node.filter(|node| connected.contains(node));
+            listed.extend(open);
+            peers.push(json!({
+                "repo": repo,
+                "addr": peer.addr,
+                "node": node.map(|node| node.to_base32()),
+                "connected": open.is_some(),
+                "relay": open.and_then(relay_of),
+                "last_ok_secs_ago": peer.last_ok.map(|when| (now() - when).max(0)),
+                "fails": peer.fails,
+            }));
+        }
+        // Sessions the cache has no address for, such as inbound ones.
+        for &node in connected.iter().filter(|node| !listed.contains(node)) {
+            peers.push(json!({
+                "repo": repo,
+                "addr": null,
+                "node": node.to_base32(),
+                "connected": true,
+                "relay": relay_of(node),
+                "last_ok_secs_ago": null,
+                "fails": 0,
+            }));
+        }
+    }
+    Ok(json!({ "peers": peers }))
 }
 
 /// Announce a newly served repo now on LAN (6.3) and the DHT (DHT-2),
@@ -154,6 +256,46 @@ pub async fn set_seeding(
         announce_routes(state, repo);
     }
     Ok(json!({ "seeding": seeding }))
+}
+
+/// `purge`: stop serving a repo and delete its store, manifests and
+/// database rows (SEC-13). The CLI asks for confirmation first.
+pub async fn purge(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
+    let repo = parse_repo(arg_str(args, "repo")?)?;
+    let _ = db_repo(state, repo)?;
+    let net = state.net();
+    // Wait for a running sync, which would write the store back.
+    let lock = net.map(|net| net.sync_lock(repo));
+    let _held = match &lock {
+        Some(lock) => Some(lock.lock().await),
+        None => None,
+    };
+    let had_key = state.home.repo_key_path(repo).is_file();
+    {
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| IpcError::new("malformed", "database lock poisoned"))?;
+        // Rows first: from here on nothing serves or announces it.
+        db.forget_repo(repo)?;
+    }
+    if let Some(net) = net {
+        net.close_sessions(repo);
+    }
+    let remove = |result: std::io::Result<()>| match result {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(IpcError::new(
+            "malformed",
+            format!("could not delete everything: {err}"),
+        )),
+        _ => Ok(()),
+    };
+    // The key cannot be recreated, so it goes only when asked for by name.
+    let delete_key = args.get("delete_key").and_then(Value::as_bool) == Some(true);
+    if delete_key {
+        remove(std::fs::remove_file(state.home.repo_key_path(repo)))?;
+    }
+    remove(std::fs::remove_dir_all(state.home.repo_dir(repo)))?;
+    Ok(json!({ "purged": true, "had_key": had_key, "key_deleted": had_key && delete_key }))
 }
 
 /// `fork`: create an independent repo from another one (section 8.4).

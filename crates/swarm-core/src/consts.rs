@@ -5,7 +5,11 @@
 /// Domain separator prefixed to manifest bytes before signing.
 pub const CTX_SIG_MANIFEST: &[u8] = b"swarmgit/v1/manifest\0";
 
-/// BLAKE3 derive-key context for DHT topics.
+/// Domain separator prefixed to a repo's name and description before signing.
+pub const CTX_SIG_ABOUT: &[u8] = b"swarmgit/v1/about\0";
+
+/// BLAKE3 derive-key context for DHT topics, and for the key of the relay
+/// rendezvous topics (relay design spec milestone R6).
 pub const CTX_TOPIC: &str = "swarmgit/v1/topic";
 
 /// BLAKE3 derive-key context for interest tokens.
@@ -25,6 +29,14 @@ pub const CTX_NODEAUTH: &[u8] = b"swarmgit/v1/nodeauth";
 
 /// Domain separator for the relay listener proof (relay design spec REL-1).
 pub const CTX_RELAY: &[u8] = b"swarmgit/v1/relayauth";
+
+/// BLAKE3 derive-key context for the public relay directory infohash
+/// (relay design spec REL-23).
+pub const CTX_RELAY_DIR: &str = "swarmgit/v1 relay directory";
+
+/// BLAKE3 derive-key context for rendezvous hashing of nodes onto relays
+/// (relay design spec REL-28).
+pub const CTX_RELAY_PLACE: &str = "swarmgit/v1 relay placement";
 
 /// BEP 44 salt prefix for the DHT head pointer.
 pub const SALT_HEAD: &[u8] = b"swarmgit/v1/head";
@@ -78,6 +90,19 @@ pub const MAX_REFS: usize = 4096;
 
 /// Maximum ref name length.
 pub const MAX_REFNAME_BYTES: usize = 255;
+
+/// Maximum repo name length.
+pub const MAX_NAME_BYTES: usize = 64;
+
+/// Maximum repo description length.
+pub const MAX_DESCRIPTION_BYTES: usize = 512;
+
+/// Maximum size of one signed name and description record.
+pub const MAX_ABOUT_BYTES: usize = 8 * 1024;
+
+/// How far past the local clock a record's revision may lie. It stops one
+/// record from outranking every later edit.
+pub const MAX_ABOUT_SKEW_SECS: u64 = 24 * 60 * 60;
 
 /// Maximum maintainers in one root manifest.
 pub const MAX_MAINTAINERS: usize = 64;

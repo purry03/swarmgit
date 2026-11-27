@@ -1,205 +1,29 @@
 //! Command-line interface (spec section 9.1).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
 use serde_json::{json, Value};
-use swarm_core::ids::{Link, RepoId};
+use swarm_core::ids::{Link, NodeId, RepoId};
 use swarm_daemon::client::ClientError;
 use swarm_daemon::{repo as daemon_repo, Client};
+use swarm_disc::dht::{DhtConfig, MainlineDht};
+use swarm_relay::{Directory, DirectoryConfig};
 use swarm_store::git::{self, Git};
 use swarm_store::{keyio, Home};
 
+mod args;
+mod daemon;
 mod repo;
+mod status;
+use args::{Cli, Cmd, KeyCmd, MaintainersCmd, MirrorCmd};
+use daemon::daemon;
 use repo::{
-    accept, export, gc, import, key_cmd, maintainers_cmd, mirror_export, recovery_cmd,
+    accept, export, gc, import, key_cmd, maintainers_cmd, mirror_export, purge, recovery_cmd,
     resolve_repo, rotate_cmd, unseed,
 };
-
-#[derive(Parser)]
-#[command(name = "swarm", version, about = "Zero-setup peer-to-peer git")]
-struct Cli {
-    #[command(subcommand)]
-    command: Cmd,
-}
-
-#[derive(Subcommand)]
-enum MirrorCmd {
-    /// Write DIR/<repo-id>/repo.swarmbundle; serve DIR with any web server.
-    Export {
-        /// A repo ID or link.
-        link: String,
-        /// Directory to write into.
-        dir: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    /// Create a repo key and publish the first manifest.
-    Init {
-        /// Object format for a newly created git repo.
-        #[arg(long, value_name = "FORMAT")]
-        object_format: Option<String>,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Print the link for a repo.
-    Link {
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-        repo: Option<String>,
-    },
-    /// Show repos, sequence numbers and conflicts.
-    Status {
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-        repo: Option<String>,
-    },
-    /// Sync a repo and keep serving it.
-    Seed {
-        /// A `swarm://` link, optionally with hints.
-        link: String,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Stop serving a repo but keep its store.
-    Unseed {
-        /// A repo ID or link.
-        link: String,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Repack a repo's store and drop unreachable objects, when idle (ST-7).
-    Gc {
-        /// A repo ID or link.
-        link: String,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Create an independent repo from another one.
-    Fork {
-        /// The source link, optionally with hints.
-        link: String,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Write a repo and its signed state to a bundle file for offline transfer.
-    Export {
-        /// A repo ID or link.
-        link: String,
-        /// Bundle file to write.
-        #[arg(short = 'o', long = "output", value_name = "FILE")]
-        output: PathBuf,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Publish a repo for static mirrors (plain file hosting).
-    Mirror {
-        #[command(subcommand)]
-        command: MirrorCmd,
-    },
-    /// Read a bundle file, making its repo available offline.
-    Import {
-        /// Bundle file to read.
-        file: PathBuf,
-        /// Print one JSON object on stdout.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add or remove maintainers, who may publish without the root key.
-    Maintainers {
-        #[command(subcommand)]
-        command: MaintainersCmd,
-    },
-    /// Settle a ref conflict here by taking one signer's value.
-    Accept {
-        /// A repo ID or link.
-        repo: String,
-        /// The ref in conflict, for example refs/heads/main.
-        refname: String,
-        /// The signer (key ID, hex or base32) whose value to take.
-        signer: String,
-    },
-    /// Key management.
-    Key {
-        #[command(subcommand)]
-        command: KeyCmd,
-    },
-    /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
-    Completions {
-        /// The shell to generate for.
-        shell: Shell,
-    },
-    /// Run, start or stop the daemon.
-    Daemon {
-        /// Stay in the foreground.
-        #[arg(long)]
-        foreground: bool,
-        /// Run as an already-detached process (used by autostart).
-        #[arg(long, hide = true)]
-        detach: bool,
-        #[command(subcommand)]
-        action: Option<DaemonCmd>,
-    },
-}
-
-#[derive(Subcommand)]
-enum MaintainersCmd {
-    /// Authorize a key (root key only), optionally limited to ref globs.
-    Add {
-        repo: String,
-        /// The maintainer's key ID, from `swarm key new` or `swarm key id`.
-        key: String,
-        /// Ref globs the key may publish (default refs/heads/*).
-        globs: Vec<String>,
-    },
-    /// Remove a maintainer (root key only).
-    Remove { repo: String, key: String },
-    /// List the maintainers.
-    List { repo: String },
-}
-
-#[derive(Subcommand)]
-enum KeyCmd {
-    /// Create a recovery key, name it in the repo, and save it to FILE (keep it offline).
-    Recovery {
-        repo: String,
-        #[arg(short = 'o', long = "output", value_name = "FILE")]
-        output: PathBuf,
-    },
-    /// Move the root to a new key, authorized by the recovery key file.
-    Rotate {
-        repo: String,
-        #[arg(long, value_name = "FILE")]
-        recovery: PathBuf,
-    },
-    /// Create this machine's own key for a repo, to be authorized by the root.
-    New { repo: String },
-    /// Print the key ID of this machine's key for a repo.
-    Id { repo: String },
-    /// Copy a repo signing key to FILE with mode 0600.
-    Backup {
-        repo: String,
-        #[arg(short = 'o', long = "output", value_name = "FILE")]
-        output: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum DaemonCmd {
-    /// Stop the running daemon.
-    Stop,
-}
+use status::status;
 
 fn parse_repo(value: &str) -> Result<RepoId, String> {
     daemon_repo::parse_repo(value).map_err(|err| err.msg)
@@ -371,34 +195,21 @@ async fn link(repo: Option<String>, json_output: bool) -> i32 {
             return client_code(&err);
         }
     };
-    let hello = match client.call("hello", json!({})).await {
+    // The daemon builds the link: it knows its proxy, onion service and
+    // relay registrations.
+    let hello = match client
+        .call("hello", json!({ "repo": repo.to_base32() }))
+        .await
+    {
         Ok(value) => value,
         Err(err) => {
             eprintln!("swarm: {err}");
             return client_code(&err);
         }
     };
-    let port = hello.get("port").and_then(Value::as_u64).unwrap_or(0);
-    let listen = hello
-        .get("listen")
-        .and_then(Value::as_str)
-        .and_then(|value| value.parse::<std::net::SocketAddr>().ok());
-    let node = hello
-        .get("node_id")
-        .and_then(Value::as_str)
-        .and_then(|value| swarm_core::ids::NodeId::from_base32(value).ok());
-    let link = match (listen, node) {
-        (Some(listen), Some(node)) if port != 0 => {
-            // REL-8: relay hints come from the daemon, which knows its registrations.
-            let mut link = swarm_daemon::net::link_with_hint(repo, listen, node, None).to_string();
-            let relays = hello.get("relay_hints").and_then(Value::as_array);
-            for hint in relays.into_iter().flatten().filter_map(Value::as_str) {
-                link.push('&');
-                link.push_str(hint);
-            }
-            link
-        }
-        _ => format!("swarm://{}", repo.to_base32()),
+    let link = match hello.get("link").and_then(Value::as_str) {
+        Some(link) => link.to_string(),
+        None => format!("swarm://{}", repo.to_base32()),
     };
     if json_output {
         println!("{}", json!({ "link": link }));
@@ -472,6 +283,158 @@ async fn seed(link: &str, json_output: bool) -> i32 {
     .await
 }
 
+async fn inspect(link: &str, json_output: bool, show_progress: bool) -> i32 {
+    let (repo, hints) = match parse_link(link) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let mut on_event = |event: &Value| {
+            if show_progress {
+                use std::io::Write as _;
+                let line = json!({ "type": "progress", "data": event });
+                let stdout = std::io::stdout();
+                let mut stdout = stdout.lock();
+                let _ = writeln!(stdout, "{line}");
+                let _ = stdout.flush();
+            }
+        };
+        let result = client
+            .call_with_events(
+                "inspect",
+                json!({
+                    "repo": repo.to_base32(),
+                    "hints": hints,
+                    "progress": show_progress,
+                }),
+                &mut on_event,
+            )
+            .await?;
+        if json_output {
+            if show_progress {
+                println!("{}", json!({ "type": "result", "data": result }));
+            } else {
+                println!("{result}");
+            }
+        } else {
+            print_about(&result);
+            println!(
+                "{} seq={} refs={} peers={}",
+                result.get("repoId").and_then(Value::as_str).unwrap_or("?"),
+                result.get("sequence").and_then(Value::as_u64).unwrap_or(0),
+                result
+                    .get("refs")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+                result
+                    .get("peers")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+            );
+        }
+        Ok(0)
+    })
+    .await
+}
+
+fn print_about(result: &Value) {
+    for key in ["name", "description"] {
+        if let Some(text) = result.get(key).and_then(Value::as_str) {
+            println!("{key}: {text}");
+        }
+    }
+}
+
+async fn about_cmd(
+    repo: &str,
+    name: Option<String>,
+    description: Option<String>,
+    json_output: bool,
+) -> i32 {
+    let repo = match parse_repo(repo) {
+        Ok(repo) => repo,
+        Err(err) => {
+            eprintln!("swarm: {err}");
+            return 2;
+        }
+    };
+    with_client(async move {
+        let home = Home::resolve().map_err(|err| ClientError::Unreachable(err.to_string()))?;
+        let mut client = Client::connect(home).await?;
+        let result = client
+            .call(
+                "about",
+                json!({ "repo": repo.to_base32(), "name": name, "description": description }),
+            )
+            .await?;
+        if json_output {
+            println!("{result}");
+        } else {
+            print_about(&result);
+        }
+        Ok(0)
+    })
+    .await
+}
+
+async fn discover_relays(json_output: bool) -> i32 {
+    if swarm_disc::dht::disabled() {
+        if json_output {
+            println!("{}", json!({ "relays": [] }));
+        } else {
+            eprintln!("swarm: relay discovery is disabled by SWARM_NO_DHT=1");
+        }
+        return 0;
+    }
+    let dht = match MainlineDht::start(&DhtConfig::from_env(Vec::new())) {
+        Ok(dht) => dht,
+        Err(err) => {
+            eprintln!("swarm: cannot start DHT relay discovery: {err}");
+            return 1;
+        }
+    };
+    let directory = Directory::new(Some(dht), None, DirectoryConfig::default());
+    directory.refresh(&[]).await;
+    let relays: Vec<_> = directory
+        .ranked()
+        .into_iter()
+        .take(32)
+        .map(|relay| {
+            json!({
+                "address": relay.addr.to_string(),
+                "name": relay.name,
+                "relayId": NodeId::from_bytes(relay.relay_id).to_base32(),
+                "rttMs": relay.rtt_ms,
+                "successes": relay.successes,
+                "failures": relay.failures,
+            })
+        })
+        .collect();
+    if json_output {
+        println!("{}", json!({ "relays": relays }));
+    } else if relays.is_empty() {
+        println!("No public relays found.");
+    } else {
+        for relay in relays {
+            let address = relay["address"].as_str().unwrap_or("?");
+            let shown = relay["name"]
+                .as_str()
+                .map_or_else(|| address.to_string(), |name| format!("{name} ({address})"));
+            println!(
+                "{shown} relay={} rtt={}ms",
+                relay["relayId"].as_str().unwrap_or("?"),
+                relay["rttMs"].as_u64().unwrap_or(0),
+            );
+        }
+    }
+    0
+}
+
 async fn fork(link: &str, json_output: bool) -> i32 {
     let (repo, hints) = match parse_link(link) {
         Ok(value) => value,
@@ -498,99 +461,6 @@ async fn fork(link: &str, json_output: bool) -> i32 {
         Ok(0)
     })
     .await
-}
-
-async fn status(json_output: bool, repo: Option<String>) -> i32 {
-    let home = match Home::resolve() {
-        Ok(home) => home,
-        Err(err) => {
-            eprintln!("swarm: {err}");
-            return 1;
-        }
-    };
-    let mut client = match Client::connect(home).await {
-        Ok(client) => client,
-        Err(err) => {
-            eprintln!("swarm: {err}");
-            return client_code(&err);
-        }
-    };
-    let mut args = json!({});
-    if let Some(repo) = repo {
-        match parse_repo(&repo) {
-            Ok(repo) => args["repo"] = Value::String(repo.to_base32()),
-            Err(err) => {
-                eprintln!("swarm: {err}");
-                return 2;
-            }
-        }
-    }
-    let result = match client.call("status", args).await {
-        Ok(result) => result,
-        Err(err) => {
-            eprintln!("swarm: {err}");
-            return client_code(&err);
-        }
-    };
-    if json_output {
-        match serde_json::to_string(&result) {
-            Ok(text) => println!("{text}"),
-            Err(err) => {
-                eprintln!("swarm: {err}");
-                return 1;
-            }
-        }
-        return 0;
-    }
-    if let Some(repos) = result.get("repos").and_then(Value::as_array) {
-        for repo in repos {
-            eprintln!(
-                "{} seq={} refs={} peers={} seeding={}",
-                repo.get("repo").and_then(Value::as_str).unwrap_or("?"),
-                repo.get("seq").and_then(Value::as_u64).unwrap_or(0),
-                repo.get("refs").and_then(Value::as_u64).unwrap_or(0),
-                repo.get("peers").and_then(Value::as_u64).unwrap_or(0),
-                repo.get("seeding")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            );
-            if let Some(conflicts) = repo.get("conflicts").and_then(Value::as_array) {
-                for name in conflicts {
-                    eprintln!("  conflict {}", name.as_str().unwrap_or("?"));
-                }
-            }
-            if let Some(items) = repo.get("equivocations").and_then(Value::as_array) {
-                for item in items {
-                    eprintln!(
-                        "  equivocation {} seq={}",
-                        item.get("signer").and_then(Value::as_str).unwrap_or("?"),
-                        item.get("seq").and_then(Value::as_u64).unwrap_or(0),
-                    );
-                }
-            }
-        }
-    }
-    if let Some(relays) = result.get("relays").and_then(Value::as_array) {
-        for relay in relays {
-            let name = relay.get("relay").and_then(Value::as_str).unwrap_or("?");
-            if relay
-                .get("registered")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                eprintln!("relay {name} registered");
-            } else {
-                eprintln!(
-                    "relay {name} not registered: {}",
-                    relay
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or("connecting"),
-                );
-            }
-        }
-    }
-    0
 }
 
 fn key_backup(repo: &str, output: &Path) -> i32 {
@@ -621,51 +491,6 @@ fn key_backup(repo: &str, output: &Path) -> i32 {
     0
 }
 
-async fn daemon(foreground: bool, detach: bool, action: Option<DaemonCmd>) -> i32 {
-    let home = match Home::resolve() {
-        Ok(home) => home,
-        Err(err) => {
-            eprintln!("swarm: {err}");
-            return 1;
-        }
-    };
-    if let Some(DaemonCmd::Stop) = action {
-        match Client::connect_existing(home).await {
-            Ok(mut client) => {
-                if let Err(err) = client.call("stop", json!({})).await {
-                    eprintln!("swarm: {err}");
-                    return client_code(&err);
-                }
-                0
-            }
-            Err(ClientError::Unreachable(_)) => {
-                eprintln!("swarm: daemon is not running");
-                0
-            }
-            Err(err) => {
-                eprintln!("swarm: {err}");
-                client_code(&err)
-            }
-        }
-    } else if foreground || detach {
-        match swarm_daemon::daemon::run(home).await {
-            Ok(()) => 0,
-            Err(err) => {
-                eprintln!("swarm: {err}");
-                1
-            }
-        }
-    } else {
-        match Client::connect(home).await {
-            Ok(_) => 0,
-            Err(err) => {
-                eprintln!("swarm: {err}");
-                client_code(&err)
-            }
-        }
-    }
-}
-
 /// The completion script for `shell`, as shipped in `completions/`.
 #[must_use]
 pub fn completions(shell: Shell) -> String {
@@ -693,10 +518,35 @@ pub async fn run(args: Vec<String>) -> i32 {
             0
         }
         Cmd::Link { json, repo } => link(repo, json).await,
-        Cmd::Status { json, repo } => status(json, repo).await,
+        Cmd::Status { json, repo, view } => status(json, repo, view).await,
+        Cmd::Inspect {
+            link,
+            json,
+            progress,
+        } => inspect(&link, json, progress).await,
+        Cmd::About {
+            repo,
+            name,
+            description,
+            json,
+        } => about_cmd(&repo, name, description, json).await,
+        Cmd::DiscoverRelays { json } => discover_relays(json).await,
         Cmd::Seed { link, json } => seed(&link, json).await,
         Cmd::Unseed { link, json } => unseed(&link, json).await,
         Cmd::Gc { link, json } => gc(&link, json).await,
+        Cmd::Purge {
+            repo,
+            yes,
+            delete_key,
+            json,
+        } => purge(&repo, yes, delete_key, json).await,
+        Cmd::Relay(args) => match swarm_relay::cli::run(args).await {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("swarm: {err:#}");
+                1
+            }
+        },
         Cmd::Fork { link, json } => fork(&link, json).await,
         Cmd::Mirror {
             command: MirrorCmd::Export { link, dir },
@@ -735,8 +585,16 @@ pub async fn run(args: Vec<String>) -> i32 {
         Cmd::Daemon {
             foreground,
             detach,
+            experimental_udp,
             action,
-        } => daemon(foreground, detach, action).await,
+        } => {
+            // A daemon started from here inherits it; a running one keeps
+            // its settings until restarted.
+            if experimental_udp {
+                std::env::set_var("SWARM_EXPERIMENTAL_UDP", "1");
+            }
+            daemon(foreground || detach, experimental_udp, action).await
+        }
     }
 }
 

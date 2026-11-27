@@ -1,9 +1,9 @@
 # Swarmgit settings. Installed as /etc/swarmgit/config.yaml.
 #
 # Every key is optional and matches an environment variable (listen is
-# SWARM_LISTEN, and so on). An environment variable that is set always wins,
-# then ~/.config/swarmgit/config.yaml, then this file. Set SWARM_CONFIG to
-# read one specific file instead.
+# SWARM_LISTEN, and so on). The system and user files are both read, setting
+# by setting: environment wins, then ~/.config/swarmgit/config.yaml, then this
+# file. Set SWARM_CONFIG to read one specific file instead.
 
 # home: /var/lib/swarmgit          # data directory (SWARM_HOME)
 # listen: 0.0.0.0:42424            # peer listen address
@@ -11,9 +11,12 @@
 
 # Relays let peers behind NAT or mobile data reach each other (see the guide).
 # relays:
-#   - relay.example.org:42425
+#   - relay.example.org:42425      # or host:port#key to pin the relay's key
 # relay_mode: auto                 # auto | always | off
 # relay_delay_ms: 1500
+# relay_discovery: on              # on | off: find public relays by DHT and gossip
+# relay_password: secret           # sent only to relays listed with their #key
+# relay_max_bytes: 2147483648      # most bytes one session moves through a relay
 
 # lan: true                        # LAN multicast discovery
 # dht: true                        # Mainline DHT discovery
@@ -26,3 +29,14 @@
 # Static mirror base URLs (see `swarm mirror export`).
 # mirrors:
 #   - https://example.org/swarm
+
+# upload_kbps: 0                   # upload cap in kilobits per second, 0 = none
+
+# Privacy and hardening (see docs/TOR-GUIDE.md).
+# proxy: socks5://127.0.0.1:9050   # send every connection through SOCKS5
+# onion_control: 127.0.0.1:9051    # host an onion service through Tor
+# onion_password: secret           # only if Tor uses HashedControlPassword
+# onion_max_connections: 16        # onion visitors connected at once
+# onion_max_per_minute: 120        # new onion connections per minute
+# obfs: false                      # randomise handshake sizes and timing
+# experimental_udp: false          # try UDP hole punching past a relay

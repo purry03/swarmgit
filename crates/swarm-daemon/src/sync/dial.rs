@@ -7,12 +7,12 @@ use std::time::Duration;
 use swarm_core::ids::{NodeId, Oid, RepoId};
 use swarm_net::addr::PeerAddr;
 use swarm_net::handshake;
-use swarm_net::{Message, NetError, Session, SessionHandle};
+use swarm_net::{Endpoint, Message, NetError, Session, SessionHandle};
 use swarm_relay::RelayError;
-use tokio::net::TcpStream;
 use tokio::task::JoinSet;
 
 use super::progress::Progress;
+use crate::net::capped::Capped;
 use crate::net::NetState;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -35,6 +35,9 @@ pub struct Candidate {
 /// A session that carries the repo.
 pub struct Connected {
     pub handle: SessionHandle,
+    /// The relayed session kept while `handle` runs over a punched UDP path,
+    /// to carry on with if that path stops working.
+    pub fallback: Option<SessionHandle>,
     pub tips: Vec<Oid>,
     pub failed: bool,
     /// What went wrong asking this peer for the repo state, for the error
@@ -43,9 +46,10 @@ pub struct Connected {
 }
 
 impl Connected {
-    fn new(handle: SessionHandle) -> Self {
+    fn new(dialed: Dialed) -> Self {
         Self {
-            handle,
+            handle: dialed.handle,
+            fallback: dialed.fallback,
             tips: Vec::new(),
             failed: false,
             note: None,
@@ -54,6 +58,30 @@ impl Connected {
 
     pub fn node(&self) -> NodeId {
         self.handle.info().node_id
+    }
+}
+
+impl Drop for Connected {
+    fn drop(&mut self) {
+        // The punched path did its job: give the relay its splice back.
+        if let Some(relayed) = self.fallback.take() {
+            relayed.close();
+        }
+    }
+}
+
+/// What one successful dial produced.
+struct Dialed {
+    handle: SessionHandle,
+    fallback: Option<SessionHandle>,
+}
+
+impl From<SessionHandle> for Dialed {
+    fn from(handle: SessionHandle) -> Self {
+        Self {
+            handle,
+            fallback: None,
+        }
     }
 }
 
@@ -136,7 +164,7 @@ impl Dialer {
             if connected.iter().any(|peer| peer.node() == node) {
                 continue;
             }
-            connected.push(Connected::new(handle));
+            connected.push(Connected::new(handle.into()));
         }
         Self {
             connected,
@@ -171,6 +199,15 @@ impl Dialer {
         node.is_some_and(|node| self.connected.iter().any(|peer| peer.node() == node))
     }
 
+    /// True when `candidate` would add nothing. A direct address is still
+    /// tried for a node we only reach through a relay (REL-18).
+    fn covered(&self, net: &NetState, candidate: &Candidate) -> bool {
+        self.has_node(candidate.node)
+            && !candidate
+                .node
+                .is_some_and(|node| !candidate.addr.is_relay() && net.is_relayed(node))
+    }
+
     /// Dial candidates, at most [`MAX_DIALS`] at a time, until `limit`
     /// sessions are open. Returns the indexes of new sessions.
     pub async fn dial_all(
@@ -185,17 +222,17 @@ impl Dialer {
             .into_iter()
             .filter(|candidate| !(relays_off && candidate.addr.is_relay()))
             .filter(|candidate| !self.tried.contains(&candidate.addr))
-            .filter(|candidate| !self.has_node(candidate.node))
+            .filter(|candidate| !self.covered(net, candidate))
             .collect();
         // A peer whose node ID is known (a pinned hint, a remembered peer, peer
         // exchange) may be registered with a relay we use too. Try it there as
         // well, without needing a relay hint in the link.
         if !relays_off {
-            let relays: Vec<std::net::SocketAddr> = net
+            let relays: Vec<Endpoint> = net
                 .relay_statuses()
                 .iter()
                 .filter(|status| status.registered)
-                .filter_map(|status| status.addr)
+                .filter_map(|status| status.addr.clone())
                 .collect();
             let mut extra = Vec::new();
             for candidate in &queue {
@@ -205,7 +242,7 @@ impl Dialer {
                 }
                 for relay in &relays {
                     let addr = PeerAddr::Relay {
-                        relay: *relay,
+                        relay: relay.clone(),
                         node,
                     };
                     if !queue
@@ -232,7 +269,7 @@ impl Dialer {
             .collect();
         queue.reverse();
         let mut added = Vec::new();
-        let mut set: JoinSet<(PeerAddr, Result<SessionHandle, NetError>)> = JoinSet::new();
+        let mut set: JoinSet<(PeerAddr, Result<Dialed, NetError>)> = JoinSet::new();
         loop {
             while set.len() < MAX_DIALS && self.connected.len() < limit {
                 let Some(candidate) = queue.pop() else { break };
@@ -262,15 +299,33 @@ impl Dialer {
             };
             let Ok((addr, result)) = joined else { continue };
             match result {
-                Ok(handle) => {
-                    let node = handle.info().node_id;
+                Ok(dialed) => {
+                    let node = dialed.handle.info().node_id;
                     if self.has_node(Some(node)) {
+                        // A direct path replaces a relayed one (REL-18).
+                        if !addr.is_relay() && net.is_relayed(node) {
+                            net.set_relayed(node, None);
+                            for peer in self.connected.iter_mut() {
+                                if peer.node() == node {
+                                    peer.handle.close();
+                                    peer.handle = dialed.handle.clone();
+                                    peer.failed = false;
+                                }
+                            }
+                        }
                         continue;
                     }
                     self.ok += 1;
-                    self.progress.detail("dial", format!("connected to {addr}"));
+                    if addr.is_relay() && net.is_relayed(node) {
+                        // REL-16.
+                        tracing::info!(peer = %addr, "connected via relay");
+                        self.progress
+                            .say("dial", format!("connected via relay: {addr}"));
+                    } else {
+                        self.progress.detail("dial", format!("connected to {addr}"));
+                    }
                     added.push(self.connected.len());
-                    self.connected.push(Connected::new(handle));
+                    self.connected.push(Connected::new(dialed));
                 }
                 Err(err) => {
                     net.peer_fail(repo, &addr);
@@ -312,7 +367,10 @@ async fn dial(
     repo: RepoId,
     candidate: &Candidate,
     wait: Duration,
-) -> Result<SessionHandle, NetError> {
+) -> Result<Dialed, NetError> {
+    let options = net.handshake_options(HANDSHAKE_TIMEOUT);
+    // A relayed pair may then try for a direct UDP path.
+    let mut punch_via = None;
     let transport = if let PeerAddr::Relay { relay, node } = &candidate.addr {
         if !wait.is_zero() {
             tokio::time::sleep(wait).await;
@@ -322,28 +380,36 @@ async fn dial(
                 .into_iter()
                 .find(|handle| handle.info().node_id == *node)
             {
-                return Ok(handle);
+                return Ok(handle.into());
             }
         }
-        let stream = swarm_relay::connect(&relay.to_string(), *node)
+        punch_via = Some((relay.clone(), *node));
+        let (target, password) = net.relay_access(relay).await;
+        let stream = swarm_relay::connect_with(&target, *node, password.as_deref())
             .await
             .map_err(relay_error)?;
         // The relay's address says nothing about how the peer sees us, so the
         // handshake gets a neutral address (observed-address voting ignores
         // an unspecified IP).
         let neutral = PeerAddr::Tcp(SocketAddr::from(([0, 0, 0, 0], 0)));
+        let stream = Capped::new(stream, net.settings.relay_max_bytes);
         handshake::connect(
-            stream,
+            net.transport.wrap(Box::new(stream)),
             &net.node,
             std::slice::from_ref(&repo),
             Some(*node),
             neutral,
-            HANDSHAKE_TIMEOUT,
+            options,
         )
         .await?
     } else {
-        let socket: SocketAddr = candidate.addr.socket();
-        let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(socket))
+        let endpoint = candidate.addr.endpoint();
+        if endpoint.is_onion() && !net.settings.proxied() {
+            return Err(NetError::Io(std::io::Error::other(
+                "an onion address needs the proxy setting",
+            )));
+        }
+        let stream = tokio::time::timeout(CONNECT_TIMEOUT, net.transport.dial(&endpoint))
             .await
             .map_err(|_| NetError::Timeout("connect timed out".into()))??;
         handshake::connect(
@@ -352,16 +418,28 @@ async fn dial(
             std::slice::from_ref(&repo),
             candidate.node,
             candidate.addr.clone(),
-            HANDSHAKE_TIMEOUT,
+            options,
         )
         .await?
     };
     let node = transport.info.node_id;
     net.peer_ok(repo, &candidate.addr, node);
-    Ok(crate::net::serve::spawn_session(
-        net,
-        Session::start(transport),
-    ))
+    let via = match &candidate.addr {
+        PeerAddr::Relay { relay, .. } => Some(relay.to_string()),
+        _ => None,
+    };
+    net.set_relayed(node, via);
+    let handle = crate::net::serve::spawn_session(net, Session::start(transport));
+    if let Some((relay, node)) = punch_via {
+        if let Some(direct) = crate::net::punch::upgrade(net, repo, &handle, node, &relay).await {
+            net.set_relayed(node, None);
+            return Ok(Dialed {
+                handle: direct,
+                fallback: Some(handle),
+            });
+        }
+    }
+    Ok(handle.into())
 }
 
 /// Cached peers for the repo, best first.
@@ -387,9 +465,9 @@ pub fn cached_candidates(net: &NetState, repo: RepoId) -> Vec<Candidate> {
 /// link-local (`fe80::/10`). Remembered or exchanged ones are useless from
 /// another network, so only the LAN route may offer them.
 fn is_link_local(addr: &PeerAddr) -> bool {
-    match addr.socket().ip() {
-        std::net::IpAddr::V6(ip) => ip.segments()[0] & 0xffc0 == 0xfe80,
-        std::net::IpAddr::V4(_) => false,
+    match addr.socket().map(|socket| socket.ip()) {
+        Some(std::net::IpAddr::V6(ip)) => ip.segments()[0] & 0xffc0 == 0xfe80,
+        _ => false,
     }
 }
 
@@ -469,7 +547,12 @@ pub async fn exchange_peers(
             let Ok((addr, node)) = PeerAddr::decode(bytes) else {
                 continue;
             };
-            if node == Some(net.node_id) || addr.socket().ip().is_unspecified() {
+            let unspecified = addr
+                .socket()
+                .is_some_and(|socket| socket.ip().is_unspecified());
+            // Link-local addresses from another node carry no interface to
+            // dial them on.
+            if node == Some(net.node_id) || unspecified || is_link_local(&addr) {
                 continue;
             }
             if let Ok(db) = net.db.lock() {

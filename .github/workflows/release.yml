@@ -1,0 +1,109 @@
+# Release: pushing a tag vX.Y.Z tests the code, builds every package with
+# scripts/package.sh and publishes them as a GitHub release. The tag must match
+# the workspace version in Cargo.toml.
+#
+# Run by hand (Actions > release > Run workflow) it builds the packages and
+# keeps them as a workflow artifact, without publishing anything.
+#
+# The Dockerfiles are not in the repository, so the packaging half of
+# package.sh (SWARM_PKG_INSIDE=1) runs directly on the runner.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  ZIG_VERSION: 0.13.0
+  ZIG_SHA256: d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea
+  ZIGBUILD_VERSION: 0.24.1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches Cargo.toml
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "swarm-cli") | .version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but Cargo.toml says $version"
+            exit 1
+          fi
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test
+        env:
+          SWARM_NO_DHT: "1"
+          SWARM_NO_UPNP: "1"
+        run: cargo test --locked --workspace -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev rpm
+          curl -fsSLo zig.tar.xz "https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz"
+          echo "$ZIG_SHA256  zig.tar.xz" | sha256sum -c
+          mkdir "$RUNNER_TEMP/zig"
+          tar -xJf zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          rm zig.tar.xz
+          echo "$RUNNER_TEMP/zig" >>"$GITHUB_PATH"
+          cargo install --locked cargo-zigbuild --version "$ZIGBUILD_VERSION"
+          rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+            x86_64-apple-darwin aarch64-apple-darwin
+      - name: Build packages
+        env:
+          SWARM_PKG_INSIDE: "1"
+          TARGETS: "linux:aarch64 linux:x86_64 macos:aarch64 macos:x86_64"
+          WANT_DEB: "1"
+          WANT_RPM: "1"
+          WANT_TAR: "1"
+          OUT_DIR: dist
+          # Optional repository variable "Name <email>" for the .deb files.
+          MAINTAINER: ${{ vars.MAINTAINER }}
+        run: scripts/package.sh
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.deb *.rpm *.tar.gz >SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flags=(--verify-tag --generate-notes)
+          # v1.2.3-rc1 and the like are pre-releases.
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"

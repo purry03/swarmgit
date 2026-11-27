@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build -q -p swarm-cli
 mkdir -p completions
-bin=target/debug/swarm
+bin=${CARGO_TARGET_DIR:-target}/debug/swarm
 $bin completions bash >completions/swarm.bash
 $bin completions zsh >completions/_swarm
 $bin completions fish >completions/swarm.fish

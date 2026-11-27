@@ -7,15 +7,33 @@
 //! Frames are read with exact reads and no read-ahead, so no splice byte is
 //! ever consumed by the framing layer.
 
+use std::net::SocketAddr;
+
 use swarm_core::cbor::{self, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::RelayError;
 
+#[path = "proto_fields.rs"]
+mod fields;
+use fields::{
+    addresses, fixed, flag, ids, malformed, read_addresses, read_ids, read_info, text, uint,
+};
+
 /// Relay protocol version.
 pub const VERSION: u8 = 1;
 /// Largest frame accepted before the splice.
 pub const MAX_FRAME: usize = 8192;
+/// Most relay addresses in one `RRelays`.
+pub const MAX_RELAYS_REPLY: usize = 32;
+/// Most relay addresses in one `Referral`.
+pub const MAX_REFERRALS: usize = 8;
+/// Most topics in one `Publish`.
+pub const MAX_TOPICS_FRAME: usize = 64;
+/// Most nodes in one `Holders`.
+pub const MAX_HOLDERS: usize = 32;
+/// Most capabilities or limits in one `RInfoReply`.
+const MAX_INFO_ITEMS: usize = 16;
 
 /// Role requested in `RHello`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +44,14 @@ pub enum Role {
     Connect = 2,
     /// Accept a pipe the relay announced with `Incoming`.
     Accept = 3,
+    /// Ask the relay about itself and the relay network.
+    Info = 4,
+    /// Publish rendezvous topics, after the same proof as listening.
+    Publish = 5,
 }
+
+/// Longest relay password.
+pub const MAX_PASSWORD: usize = 128;
 
 /// One relay protocol message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +62,16 @@ pub enum Msg {
         version: u8,
         /// What the client wants.
         role: Role,
+    },
+    /// Type 0 with a third field: `RHello` to a relay that needs a password
+    /// (REL-21).
+    HelloAuth {
+        /// Protocol version.
+        version: u8,
+        /// What the client wants.
+        role: Role,
+        /// The relay's shared secret.
+        password: String,
     },
     /// Type 1. The sender closes afterwards.
     Error {
@@ -93,28 +128,76 @@ pub enum Msg {
         /// Nonce of the ping.
         nonce: u64,
     },
-}
-
-fn malformed(what: &str) -> RelayError {
-    RelayError::Protocol(what.to_string())
-}
-
-fn fixed<const N: usize>(value: &Value, what: &str) -> Result<[u8; N], RelayError> {
-    value
-        .as_bytes()
-        .and_then(|bytes| <[u8; N]>::try_from(bytes).ok())
-        .ok_or_else(|| malformed(what))
-}
-
-fn text(value: &Value, what: &str) -> Result<String, RelayError> {
-    value
-        .as_text()
-        .map(str::to_string)
-        .ok_or_else(|| malformed(what))
-}
-
-fn uint(value: &Value, what: &str) -> Result<u64, RelayError> {
-    value.as_uint().ok_or_else(|| malformed(what))
+    /// Type 11.
+    Info,
+    /// Type 12.
+    InfoReply {
+        /// Protocol version.
+        version: u8,
+        /// What the relay offers.
+        caps: Vec<String>,
+        /// Named limits.
+        limits: Vec<(String, u64)>,
+        /// Identifies this relay process.
+        relay_id: [u8; 32],
+        /// The caller's address as the relay sees it.
+        observed: String,
+    },
+    /// Type 13.
+    GetRelays {
+        /// Most addresses wanted.
+        max: u64,
+    },
+    /// Type 14.
+    Relays {
+        /// Other relays this one has verified.
+        addrs: Vec<SocketAddr>,
+    },
+    /// Type 15.
+    Where {
+        /// Node ID looked for.
+        target: [u8; 32],
+    },
+    /// Type 16.
+    Referral {
+        /// True when the node is registered with this relay.
+        found: bool,
+        /// Relays closer to the node by rendezvous hashing.
+        closer: Vec<SocketAddr>,
+    },
+    /// Type 17. Ask a relay to check that the caller is reachable on `port`
+    /// of the address the request came from (REL-25).
+    DialBack {
+        /// The caller's relay port.
+        port: u16,
+        /// The caller's relay ID, which the dial must find.
+        relay_id: [u8; 32],
+    },
+    /// Type 18.
+    DialBackReply {
+        /// True when the dial reached the caller.
+        reachable: bool,
+    },
+    /// Type 19. The proven node serves these topics.
+    Publish {
+        /// Hashed repo IDs.
+        topics: Vec<[u8; 32]>,
+    },
+    /// Type 20.
+    Published {
+        /// How long the publication lasts.
+        ttl_secs: u64,
+    },
+    /// Type 21.
+    Lookup {
+        /// Topic looked for.
+        topic: [u8; 32],
+    },
+    /// Type 22.
+    Holders {
+        /// Node IDs that published the topic here.
+        nodes: Vec<[u8; 32]>,
+    },
 }
 
 impl Msg {
@@ -125,6 +208,16 @@ impl Msg {
                 Value::Uint(0),
                 Value::Uint(u64::from(*version)),
                 Value::Uint(*role as u64),
+            ],
+            Self::HelloAuth {
+                version,
+                role,
+                password,
+            } => vec![
+                Value::Uint(0),
+                Value::Uint(u64::from(*version)),
+                Value::Uint(*role as u64),
+                Value::Text(password.clone()),
             ],
             Self::Error { code, msg } => vec![
                 Value::Uint(1),
@@ -149,6 +242,46 @@ impl Msg {
             Self::Ready => vec![Value::Uint(8)],
             Self::Ping { nonce } => vec![Value::Uint(9), Value::Uint(*nonce)],
             Self::Pong { nonce } => vec![Value::Uint(10), Value::Uint(*nonce)],
+            Self::Info => vec![Value::Uint(11)],
+            Self::InfoReply {
+                version,
+                caps,
+                limits,
+                relay_id,
+                observed,
+            } => vec![
+                Value::Uint(12),
+                Value::Uint(u64::from(*version)),
+                Value::Array(caps.iter().cloned().map(Value::Text).collect()),
+                Value::Map(
+                    limits
+                        .iter()
+                        .map(|(key, value)| (Value::Text(key.clone()), Value::Uint(*value)))
+                        .collect(),
+                ),
+                Value::Bytes(relay_id.to_vec()),
+                Value::Text(observed.clone()),
+            ],
+            Self::GetRelays { max } => vec![Value::Uint(13), Value::Uint(*max)],
+            Self::Relays { addrs } => vec![Value::Uint(14), addresses(addrs, MAX_RELAYS_REPLY)],
+            Self::Where { target } => vec![Value::Uint(15), Value::Bytes(target.to_vec())],
+            Self::Referral { found, closer } => vec![
+                Value::Uint(16),
+                Value::Bool(*found),
+                addresses(closer, MAX_REFERRALS),
+            ],
+            Self::DialBack { port, relay_id } => vec![
+                Value::Uint(17),
+                Value::Uint(u64::from(*port)),
+                Value::Bytes(relay_id.to_vec()),
+            ],
+            Self::DialBackReply { reachable } => {
+                vec![Value::Uint(18), Value::Bool(*reachable)]
+            }
+            Self::Publish { topics } => vec![Value::Uint(19), ids(topics, MAX_TOPICS_FRAME)],
+            Self::Published { ttl_secs } => vec![Value::Uint(20), Value::Uint(*ttl_secs)],
+            Self::Lookup { topic } => vec![Value::Uint(21), Value::Bytes(topic.to_vec())],
+            Self::Holders { nodes } => vec![Value::Uint(22), ids(nodes, MAX_HOLDERS)],
         };
         cbor::encode(&Value::Array(items)).map_err(|err| RelayError::Protocol(err.to_string()))
     }
@@ -170,16 +303,31 @@ impl Msg {
         };
         match kind {
             0 => {
-                want(3)?;
+                if items.len() != 3 && items.len() != 4 {
+                    return Err(malformed("wrong field count"));
+                }
                 let role = match uint(&items[2], "role")? {
                     1 => Role::Listen,
                     2 => Role::Connect,
                     3 => Role::Accept,
+                    4 => Role::Info,
+                    5 => Role::Publish,
                     _ => return Err(malformed("unknown role")),
                 };
                 let version =
                     u8::try_from(uint(&items[1], "version")?).map_err(|_| malformed("version"))?;
-                Ok(Self::Hello { version, role })
+                let Some(password) = items.get(3) else {
+                    return Ok(Self::Hello { version, role });
+                };
+                let password = text(password, "password")?;
+                if password.len() > MAX_PASSWORD {
+                    return Err(malformed("password too long"));
+                }
+                Ok(Self::HelloAuth {
+                    version,
+                    role,
+                    password,
+                })
             }
             1 => {
                 want(3)?;
@@ -251,6 +399,78 @@ impl Msg {
                     nonce: uint(&items[1], "nonce")?,
                 })
             }
+            11 => {
+                want(1)?;
+                Ok(Self::Info)
+            }
+            12 => {
+                want(6)?;
+                read_info(items)
+            }
+            13 => {
+                want(2)?;
+                Ok(Self::GetRelays {
+                    max: uint(&items[1], "max")?,
+                })
+            }
+            14 => {
+                want(2)?;
+                Ok(Self::Relays {
+                    addrs: read_addresses(&items[1], MAX_RELAYS_REPLY)?,
+                })
+            }
+            15 => {
+                want(2)?;
+                Ok(Self::Where {
+                    target: fixed(&items[1], "target")?,
+                })
+            }
+            16 => {
+                want(3)?;
+                Ok(Self::Referral {
+                    found: flag(&items[1], "found")?,
+                    closer: read_addresses(&items[2], MAX_REFERRALS)?,
+                })
+            }
+            17 => {
+                want(3)?;
+                let port =
+                    u16::try_from(uint(&items[1], "port")?).map_err(|_| malformed("port"))?;
+                Ok(Self::DialBack {
+                    port,
+                    relay_id: fixed(&items[2], "relay id")?,
+                })
+            }
+            18 => {
+                want(2)?;
+                Ok(Self::DialBackReply {
+                    reachable: flag(&items[1], "reachable")?,
+                })
+            }
+            19 => {
+                want(2)?;
+                Ok(Self::Publish {
+                    topics: read_ids(&items[1], MAX_TOPICS_FRAME)?,
+                })
+            }
+            20 => {
+                want(2)?;
+                Ok(Self::Published {
+                    ttl_secs: uint(&items[1], "ttl")?,
+                })
+            }
+            21 => {
+                want(2)?;
+                Ok(Self::Lookup {
+                    topic: fixed(&items[1], "topic")?,
+                })
+            }
+            22 => {
+                want(2)?;
+                Ok(Self::Holders {
+                    nodes: read_ids(&items[1], MAX_HOLDERS)?,
+                })
+            }
             other => Err(RelayError::Protocol(format!("unknown type {other}"))),
         }
     }
@@ -290,75 +510,5 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn samples() -> Vec<Msg> {
-        vec![
-            Msg::Hello {
-                version: VERSION,
-                role: Role::Listen,
-            },
-            Msg::Error {
-                code: "no_such_node".into(),
-                msg: "x".into(),
-            },
-            Msg::Challenge { nonce: [7; 32] },
-            Msg::Prove {
-                bundle: vec![1; 10],
-                sig: vec![2; 10],
-                name: "relay:1".into(),
-            },
-            Msg::Listening {
-                ttl_secs: 75,
-                observed: "1.2.3.4:5".into(),
-            },
-            Msg::Incoming { token: [9; 16] },
-            Msg::Connect { target: [3; 32] },
-            Msg::Accept { token: [4; 16] },
-            Msg::Ready,
-            Msg::Ping { nonce: 1 },
-            Msg::Pong { nonce: 1 },
-        ]
-    }
-
-    #[test]
-    fn every_message_round_trips() {
-        for msg in samples() {
-            let bytes = msg.encode().unwrap();
-            assert_eq!(Msg::decode(&bytes).unwrap(), msg);
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_type_and_bad_lengths() {
-        let bytes = cbor::encode(&Value::Array(vec![Value::Uint(99)])).unwrap();
-        assert!(Msg::decode(&bytes).is_err());
-        let bytes = cbor::encode(&Value::Array(vec![
-            Value::Uint(5),
-            Value::Bytes(vec![0; 15]),
-        ]))
-        .unwrap();
-        assert!(Msg::decode(&bytes).is_err());
-        let bytes = cbor::encode(&Value::Array(vec![Value::Uint(8), Value::Uint(1)])).unwrap();
-        assert!(Msg::decode(&bytes).is_err());
-        assert!(Msg::decode(b"\xff").is_err());
-    }
-
-    #[tokio::test]
-    async fn frame_limit_is_enforced_and_no_read_ahead() {
-        let (mut a, mut b) = tokio::io::duplex(1 << 16);
-        let mut huge = ((MAX_FRAME + 1) as u32).to_be_bytes().to_vec();
-        huge.extend(vec![0u8; 16]);
-        a.write_all(&huge).await.unwrap();
-        assert!(read_msg(&mut b).await.is_err());
-
-        let (mut a, mut b) = tokio::io::duplex(1 << 16);
-        write_msg(&mut a, &Msg::Ready).await.unwrap();
-        a.write_all(b"RAW").await.unwrap();
-        assert_eq!(read_msg(&mut b).await.unwrap(), Msg::Ready);
-        let mut rest = [0u8; 3];
-        b.read_exact(&mut rest).await.unwrap();
-        assert_eq!(&rest, b"RAW");
-    }
-}
+#[path = "proto_tests.rs"]
+mod tests;

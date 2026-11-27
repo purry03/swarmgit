@@ -22,7 +22,11 @@ fail() {
 cleanup() { "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-"${COMPOSE[@]}" up -d --build >/dev/null 2>&1 || fail "could not start the topology"
+# Compose cannot read a Dockerfile that is a symlink out of the context, so
+# the image is built from the resolved path first.
+docker build -q -f "$(realpath Dockerfile.relay)" -t swarmgit-relay-test . >/dev/null ||
+    fail "could not build the image"
+"${COMPOSE[@]}" up -d --no-build >/dev/null 2>&1 || fail "could not start the topology"
 
 peer() { "${COMPOSE[@]}" exec -T "$@"; }
 
@@ -82,7 +86,7 @@ for _ in $(seq 50); do
 done
 [[ $LINK == *"h=relay:relay:42425@"* ]] || fail "link has no relay hint: $LINK"
 echo "link: $LINK"
-peer peer-b swarm status 2>&1 | grep -q "relay relay:42425 registered" || fail "swarm status does not show the relay"
+peer peer-b swarm status relays | grep -q "^relay:42425 ([0-9a-f.:]*) \+registered" || fail "swarm status does not show the relay"
 
 CLONE_OUT=$(peer peer-a bash -c "cd /state/work && git clone '$LINK' out 2>&1") || fail "clone failed: $CLONE_OUT"
 echo "$CLONE_OUT" | tail -5
@@ -106,5 +110,20 @@ echo "== SWARM_RELAY_MODE=off ignores relay hints"
 OFF_ERR=$(peer peer-a bash -c "cd /state/work && SWARM_RELAY_MODE=off SWARM_FIND_TIMEOUT=5 SWARM_HOME=/state/home-off SWARM_LISTEN=0.0.0.0:42501 git clone '$LINK' out3 2>&1" || true)
 [[ $OFF_ERR != *"download complete"* ]] || fail "relay mode off should not use the relay: $OFF_ERR"
 [[ $OFF_ERR == *"no_peers"* || $OFF_ERR == *"auth_failed"* ]] || fail "unexpected result with relays off: $OFF_ERR"
+
+echo "== the repo ID alone is enough with a relay, also after the relay restarts"
+by_id() { # by_id <name> <listen-port>
+    peer peer-a bash -c "cd /state/work && SWARM_RELAYS=relay:42425 SWARM_FIND_TIMEOUT=10 SWARM_HOME=/state/home-$1 SWARM_LISTEN=0.0.0.0:$2 timeout 60 git clone -q '$BARE' $1 2>&1"
+}
+sleep 8
+by_id before 42503 || fail "bare repo ID not found through the relay"
+# A relay holds topics in memory only, so B has to publish them again.
+"${COMPOSE[@]}" restart relay >/dev/null 2>&1 || fail "could not restart the relay"
+for _ in $(seq 60); do
+    peer peer-b swarm status relays | grep -q "^relay:42425 ([0-9a-f.:]*) \+registered" && break
+    sleep 1
+done
+sleep 8
+by_id after 42504 || fail "bare repo ID not found after the relay restarted"
 
 echo "PASS"

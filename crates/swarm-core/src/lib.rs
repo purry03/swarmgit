@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod about;
 pub mod accept;
 pub mod cbor;
 pub mod consts;
@@ -21,6 +22,7 @@ pub mod pq;
 pub mod refname;
 pub mod resolve;
 
+pub use about::{verify_about, About, VerifiedAbout};
 pub use accept::{AcceptOutcome, AcceptState, Equivocation, StoredManifest};
 pub use error::ErrorCode;
 pub use ids::{KeyId, Link, NodeId, Oid, RepoId};

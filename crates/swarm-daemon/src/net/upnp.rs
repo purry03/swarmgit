@@ -40,7 +40,13 @@ pub fn start(net: &Arc<NetState>) {
             let Some(net) = weak.upgrade() else { break };
             let listen = net.listen;
             drop(net);
-            if !map_once(listen).await {
+            let (found, public) = map_once(listen).await;
+            if public {
+                if let Some(net) = weak.upgrade() {
+                    net.mark_reachable();
+                }
+            }
+            if !found {
                 // No gateway: do not keep searching every 30 minutes.
                 break;
             }
@@ -48,21 +54,23 @@ pub fn start(net: &Arc<NetState>) {
     });
 }
 
-/// Map the listen port once. Returns false when no gateway was found.
-async fn map_once(listen: SocketAddr) -> bool {
+/// Map the listen port once. Returns whether a gateway was found, and whether
+/// the mapping is on a public address (a gateway behind carrier-grade NAT is
+/// not).
+async fn map_once(listen: SocketAddr) -> (bool, bool) {
     let mut options = SearchOptions::default();
     options.timeout = Some(SEARCH_TIMEOUT);
     let gateway = match search_gateway(options).await {
         Ok(gateway) => gateway,
         Err(err) => {
             tracing::debug!(error = %err, "no upnp gateway");
-            return false;
+            return (false, false);
         }
     };
     let local_ip = match listen.ip() {
         ip if ip.is_unspecified() => match super::primary_ipv4() {
             Some(ip) => IpAddr::V4(ip),
-            None => return false,
+            None => return (false, false),
         },
         ip => ip,
     };
@@ -78,7 +86,14 @@ async fn map_once(listen: SocketAddr) -> bool {
         .await
     {
         Ok(()) => tracing::debug!(port = listen.port(), "upnp mapping added"),
-        Err(err) => tracing::debug!(error = %err, "upnp mapping failed"),
+        Err(err) => {
+            tracing::debug!(error = %err, "upnp mapping failed");
+            return (true, false);
+        }
     }
-    true
+    let public = gateway
+        .get_external_ip()
+        .await
+        .is_ok_and(|ip| swarm_relay::directory::usable(SocketAddr::new(ip, 1), false));
+    (true, public)
 }

@@ -41,7 +41,8 @@ step "cargo build"
 cargo build --workspace -q
 
 for script in tests/e2e/m1.sh tests/e2e/m2.sh tests/e2e/lan.sh \
-    tests/e2e/dht.sh tests/e2e/m5.sh; do
+    tests/e2e/dht.sh tests/e2e/m5.sh tests/e2e/m6.sh tests/e2e/m7.sh tests/e2e/m8.sh \
+    tests/e2e/relaynet.sh tests/e2e/m9.sh tests/e2e/punch.sh tests/e2e/about.sh; do
     step "$script"
     out=$(mktemp)
     bash "$script" 2>&1 | tee "$out"

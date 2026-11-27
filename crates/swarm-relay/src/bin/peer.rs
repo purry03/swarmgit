@@ -34,6 +34,12 @@ enum Cmd {
         #[arg(long)]
         relay: String,
     },
+    /// Print the other relays a relay has verified, one per line.
+    Relays {
+        /// Relay as host:port.
+        #[arg(long)]
+        relay: String,
+    },
     /// Reach a node through a relay.
     Dial {
         /// Relay as host:port.
@@ -67,6 +73,11 @@ async fn main() -> anyhow::Result<()> {
     let addr = PeerAddr::Tcp(PLACEHOLDER.parse::<SocketAddr>()?);
     match args.cmd {
         Cmd::Id => println!("{}", node.to_base32()),
+        Cmd::Relays { relay } => {
+            for addr in swarm_relay::client::get_relays(&relay, 32).await? {
+                println!("{addr}");
+            }
+        }
         Cmd::Listen { relay } => {
             let mut listener = swarm_relay::listen(&relay, key.clone()).await?;
             println!("listening node={}", node.to_base32());
