@@ -1,0 +1,44 @@
+name: Announce releases
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the release to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          NAME: ${{ github.event.release.name }}
+          TAG: ${{ github.event.release.tag_name }}
+          URL: ${{ github.event.release.html_url }}
+          BODY: ${{ github.event.release.body }}
+          AUTHOR: ${{ github.event.release.author.login }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_WEBHOOK secret is not set" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg name "$NAME" \
+            --arg tag "$TAG" \
+            --arg url "$URL" \
+            --arg body "$BODY" \
+            --arg author "$AUTHOR" \
+            '{
+              username: "swarmgit",
+              embeds: [{
+                title: (if $name == "" then $tag else $name end),
+                url: $url,
+                description: ($body[0:1800]),
+                color: 15622994,
+                author: { name: ("release " + $tag) },
+                footer: { text: ("by " + $author) }
+              }]
+            }' > payload.json
+          curl -sSf -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK"
