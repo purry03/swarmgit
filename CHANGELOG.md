@@ -2,6 +2,12 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## 0.2.2 (2026-11-27)
+
+- Fixed: `swarm inspect` could leave you holding and seeding the repository. If
+  it was pushed to while the inspecting daemon was still connected, that daemon
+  downloaded it. To remove a copy you did not want, run `swarm purge <repo-id>`.
+
 ## 0.2.1 (2026-11-27)
 
 - Release files for the client are now named `swarm_…` and `swarm-…` instead of

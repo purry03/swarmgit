@@ -77,8 +77,8 @@ Open the same ports in your cloud provider's firewall or security group.
 On a Debian or Ubuntu server with a DNS name already pointing at it:
 
 ```bash
-curl -LO https://github.com/purry03/swarmgit/releases/download/v0.2.1/swarm-relay_0.2.1_amd64.deb
-sudo apt install ./swarm-relay_0.2.1_amd64.deb
+curl -LO https://github.com/purry03/swarmgit/releases/download/v0.2.2/swarm-relay_0.2.2_amd64.deb
+sudo apt install ./swarm-relay_0.2.2_amd64.deb
 sudoedit /etc/default/swarm-relay
 ```
 
@@ -126,12 +126,12 @@ Finally, clone that link from a different network.
 
 ### Debian and Ubuntu
 
-Packages: `swarm-relay_0.2.1_amd64.deb` and `swarm-relay_0.2.1_arm64.deb` from
+Packages: `swarm-relay_0.2.2_amd64.deb` and `swarm-relay_0.2.2_arm64.deb` from
 the [releases page](https://github.com/purry03/swarmgit/releases). Check them against `SHA256SUMS` from the same release:
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
-sudo apt install ./swarm-relay_0.2.1_amd64.deb
+sudo apt install ./swarm-relay_0.2.2_amd64.deb
 ```
 
 The package installs:
@@ -150,10 +150,10 @@ public network and set no `--name`. Set your name before relying on it.
 ### Fedora and RHEL
 
 The RPM is built with `scripts/package.sh --rpm` as
-`swarm-relay-0.2.1-1.x86_64.rpm` (or `aarch64`):
+`swarm-relay-0.2.2-1.x86_64.rpm` (or `aarch64`):
 
 ```bash
-sudo dnf install ./swarm-relay-0.2.1-1.x86_64.rpm
+sudo dnf install ./swarm-relay-0.2.2-1.x86_64.rpm
 ```
 
 It uses the same unit and settings file.

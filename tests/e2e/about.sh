@@ -11,6 +11,7 @@ PORT_C=42563
 PORT_RELAY=42564
 PORT_D=42565
 PORT_E=42566
+PORT_F=42567
 WORK=$(mktemp -d)
 A_HOME=$WORK/a
 B_HOME=$WORK/b
@@ -19,7 +20,7 @@ C_HOME=$WORK/c
 RELAY=
 cleanup() {
     [[ -n $RELAY ]] && kill "$RELAY" 2>/dev/null
-    for home in "$A_HOME" "$B_HOME" "$C_HOME" "$WORK/d" "$WORK/e"; do
+    for home in "$A_HOME" "$B_HOME" "$C_HOME" "$WORK/d" "$WORK/e" "$WORK/f"; do
         SWARM_HOME=$home swarm daemon stop >/dev/null 2>&1 || true
     done
     rm -rf "$WORK" "$HELPER_DIR"
@@ -119,6 +120,18 @@ expect "$SEEN" 'description: first words'
 b swarm about "${NAMED:8:52}" --name mine >/dev/null
 expect "$(b swarm about "${NAMED:8:52}")" 'name: mine'
 expect "$(a swarm about "$REPO")" 'name: demo'
+
+echo "== a push after an inspect does not make the visitor hold the repo"
+f() { env SWARM_HOME="$WORK/f" SWARM_LISTEN=127.0.0.1:$PORT_F "$@"; }
+f swarm inspect "$LINK" >/dev/null
+git commit -q --allow-empty -m two
+a git push -q swarm main
+# The visitor is still connected, so the new head is announced to it.
+sleep 3
+HELD=$(f swarm status)
+if grep -qF -- "$REPO" <<<"$HELD"; then
+    swarm_fail "an inspected repo was stored after a push: $HELD"
+fi
 
 echo "== inspect lists a seeder that only a relay knows, besides the one in the link"
 "$SWARM_BIN_DIR/swarm-relay" --listen "127.0.0.1:$PORT_RELAY" --no-network >"$WORK/relay.log" 2>&1 &

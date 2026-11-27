@@ -269,8 +269,8 @@ To prepare a release, update `version` in `Cargo.toml`, run
 matching tag:
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.2.2
+git push origin v0.2.2
 ```
 
 The [release workflow](.github/workflows/release.yml) runs the tests, builds

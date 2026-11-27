@@ -287,6 +287,11 @@ impl Drop for Claim {
 /// on: forwarding one we could not fetch, or forwarding every copy of one,
 /// makes peers announce it back and forth without end.
 async fn serve_announce(net: &Arc<NetState>, repo: RepoId, envelope: Vec<u8>) {
+    // A session left over from an inspect hears announces for a repo that is
+    // not held here. A sync would download it and start seeding it.
+    if !net.store(repo).exists() {
+        return;
+    }
     // Claimed before the freshness check, so that a copy cannot pass the
     // check and then run after the first one has finished.
     let Some(_claim) = net.announcing.claim(&envelope) else {

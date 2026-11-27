@@ -9,7 +9,7 @@
 #   scripts/package.sh --tar --macos    # only the macOS archives
 #   scripts/package.sh --arch aarch64   # only ARM64 (repeatable)
 #   scripts/package.sh --sign           # also sign SHA256SUMS with gpg
-#   VERSION=0.2.1 scripts/package.sh    # override the Cargo.toml version
+#   VERSION=0.2.2 scripts/package.sh    # override the Cargo.toml version
 #
 # Two packages come out of each .deb/.rpm build: `swarmgit` (the swarm CLI and
 # git remote helper; its files are named swarm_* and swarm-*, but Debian and
