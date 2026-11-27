@@ -35,8 +35,8 @@
 #   OUT_DIR     output directory (default: dist)
 #   VERSION     overrides the workspace version from Cargo.toml
 #   RELEASE     RPM release number (default: 1)
-#   MAINTAINER  "Name <email>" for the .deb (default: git config user, then a
-#               placeholder)
+#   MAINTAINER  "Name <email>" for the .deb (default: Swarmgit, with a
+#               placeholder address)
 #   SIGN_KEY    gpg key id/fingerprint used to sign SHA256SUMS (implies --sign)
 #   GLIBC       glibc floor for Linux builds (default: 2.17)
 
@@ -159,15 +159,9 @@ VERSION=$(detect_version)
 # revision suffix (0.1.0-1) becomes 0.1.0 for RPM, which is why RELEASE exists.
 RPM_VERSION=${VERSION//-/.}
 
-if [[ -z ${MAINTAINER:-} ]]; then
-    name=$(git config user.name 2>/dev/null || true)
-    email=$(git config user.email 2>/dev/null || true)
-    if [[ -n $name && -n $email ]]; then
-        MAINTAINER="$name <$email>"
-    else
-        MAINTAINER="Swarmgit Maintainers <maintainers@swarmgit.invalid>"
-    fi
-fi
+# Published with every package, so it is never taken from the builder's git
+# settings.
+MAINTAINER=${MAINTAINER:-Swarmgit <maintainers@swarmgit.invalid>}
 
 # ---------------------------------------------------------------------------
 # Inside the packaging container.
@@ -412,6 +406,10 @@ EOF
         install -Dm 0644 completions/swarm.bash "$stage/usr/share/bash-completion/completions/swarm"
         install -Dm 0644 completions/_swarm "$stage/usr/share/zsh/vendor-completions/_swarm"
         install -Dm 0644 completions/swarm.fish "$stage/usr/share/fish/vendor_completions.d/swarm.fish"
+        mkdir -p "$stage/usr/share/man/man1"
+        for page in man/*.1; do
+            gzip -9nc "$page" >"$stage/usr/share/man/man1/${page##*/}.gz"
+        done
         mkdir -p "$stage/etc/swarmgit"
         install -m 0644 docs/config.example.yaml "$stage/etc/swarmgit/config.yaml"
         echo /etc/swarmgit/config.yaml >"$stage/DEBIAN/conffiles"
@@ -450,6 +448,10 @@ EOF
         [[ -f README.md ]] && install -m 0644 README.md "$src/README.md"
         install -m 0644 docs/config.example.yaml "$src/config.yaml"
         cp completions/swarm.bash completions/_swarm completions/swarm.fish "$src/"
+        mkdir -p "$src/man"
+        for page in man/*.1; do
+            gzip -9nc "$page" >"$src/man/${page##*/}.gz"
+        done
 
         cat >"$spec" <<EOF
 # Strip/BRP hooks and automatic dependency generation assume a full Fedora
@@ -480,6 +482,8 @@ install -Dpm 0644 $src/config.yaml %{buildroot}/etc/swarmgit/config.yaml
 install -Dpm 0644 $src/swarm.bash %{buildroot}/usr/share/bash-completion/completions/swarm
 install -Dpm 0644 $src/_swarm %{buildroot}/usr/share/zsh/site-functions/_swarm
 install -Dpm 0644 $src/swarm.fish %{buildroot}/usr/share/fish/vendor_completions.d/swarm.fish
+mkdir -p %{buildroot}/usr/share/man/man1
+install -pm 0644 $src/man/*.1.gz %{buildroot}/usr/share/man/man1/
 EOF
         if [[ -f $src/README.md ]]; then
             cat >>"$spec" <<EOF
@@ -495,6 +499,7 @@ EOF
 /usr/share/bash-completion/completions/swarm
 /usr/share/zsh/site-functions/_swarm
 /usr/share/fish/vendor_completions.d/swarm.fish
+/usr/share/man/man1/swarm*.1.gz
 EOF
         [[ -f $src/README.md ]] && echo '%{_docdir}/swarmgit/README.md' >>"$spec"
 
@@ -519,6 +524,8 @@ EOF
         install -m 0755 "$BIN" "$stage/bin/swarm"
         ln -sfn swarm "$stage/bin/git-remote-swarm"
         install -m 0755 "$RELAY_BIN" "$stage/bin/swarm-relay"
+        mkdir -p "$stage/share/man/man1"
+        install -m 0644 man/*.1 "$stage/share/man/man1/"
         for doc in README.md CHANGELOG.md; do
             [[ -f $doc ]] && install -m 0644 "$doc" "$stage/$doc"
         done

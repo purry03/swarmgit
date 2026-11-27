@@ -283,12 +283,12 @@ pub async fn inspect(
             .filter_map(|name| name.strip_prefix(prefix))
             .collect()
     };
-    // With no peer reached, the stored name record is the one there is.
-    let about = outcome.about.clone().or_else(|| {
-        (outcome.state == "stale")
-            .then(|| local_about(state, repo))
-            .flatten()
-    });
+    // The peers reached may not have the name record, or only an older one
+    // than the copy here.
+    let about = match (outcome.about.clone(), local_about(state, repo)) {
+        (Some(theirs), Some(ours)) if ours.supersedes(&theirs) => Some(ours),
+        (theirs, ours) => theirs.or(ours),
+    };
     let (upstream, downstream) = lineage::of(state, repo, outcome.forked_from)?;
     Ok(json!({
         "repoId": repo.to_base32(),

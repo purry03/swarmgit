@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-purge 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-purge \- Delete a repo\*(Aqs store and manifests, and stop serving it
+.SH SYNOPSIS
+\fBswarm purge\fR [\fB\-\-yes\fR] [\fB\-\-delete\-key\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREPO\fR> 
+.SH DESCRIPTION
+Delete a repo\*(Aqs store and manifests, and stop serving it
+.SH OPTIONS
+.TP
+\fB\-\-yes\fR
+Do not ask for confirmation. The signing key is kept
+.TP
+\fB\-\-delete\-key\fR
+Also delete the signing key. It cannot be recreated
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIREPO\fR>
+A repo ID or link

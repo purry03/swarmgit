@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-seed 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-seed \- Sync a repo and keep serving it
+.SH SYNOPSIS
+\fBswarm seed\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fILINK\fR> 
+.SH DESCRIPTION
+Sync a repo and keep serving it
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fILINK\fR>
+A `swarm://` link, optionally with hints

@@ -49,8 +49,8 @@ scripts/package.sh --tar --macos               # macOS archives
 ```
 
 The Linux packages install `/usr/bin/swarm` and a `git-remote-swarm` symlink,
-plus shell completions for bash, zsh and fish. They depend on `git` and
-`ca-certificates`. The client daemon starts on demand, so the client package
+plus shell completions for bash, zsh and fish and man pages (`man swarm`). They
+depend on `git` and `ca-certificates`. The client daemon starts on demand, so the client package
 has no systemd unit. Archives contain `bin/swarm`, `bin/git-remote-swarm` and
 `bin/swarm-relay`; put `bin/` on your `PATH`. Linux binaries link against glibc
 2.17, so they run on older distributions.
@@ -137,7 +137,7 @@ swarm mr merge fix
 
 From a fork, `swarm mr create -R '<link of the original>'` proposes the branch
 there. The conversation is signed, stored with the repo, and cannot be edited
-afterwards. See [merge requests](docs/USER-GUIDE.md#9b-merge-requests).
+afterwards. See [merge requests](docs/USER-GUIDE.md#7-merge-requests).
 
 ## Try the two-peer demo
 
@@ -155,8 +155,8 @@ Open a shell on a peer with:
 docker compose -f compose.peers.yaml exec peer-a bash
 ```
 
-The [client guide](docs/USER-GUIDE.md) has the full walkthrough, including key
-copying, seeding and configuration.
+The [client guide](docs/USER-GUIDE.md) covers the same demo by hand, and everything
+from installing to keys, seeding and configuration.
 
 ## Why Swarmgit
 
@@ -210,8 +210,8 @@ scripts/ci.sh
 
 | Document | What it covers |
 | --- | --- |
-| [Client guide](docs/USER-GUIDE.md) | Docker demo, seeding, bundles, mirrors, maintainers, configuration and troubleshooting. |
-| [Relay guide](docs/RELAY-GUIDE.md) | Installing and running a relay, client registration, capacity and privacy. |
+| [Client guide](docs/USER-GUIDE.md) | Installing, daily use, merge requests, seeding, reachability, keys, settings and troubleshooting. |
+| [Relay guide](docs/RELAY-GUIDE.md) | Installing and running a relay, firewall and DNS, private and public relays, client setup, upgrades and troubleshooting. |
 | [Tor guide](docs/TOR-GUIDE.md) | SOCKS5 proxying and onion services. |
 | [Relay design](docs/RELAY-DESIGN.md) | Relay protocol and network discovery design. |
 | [Changelog](CHANGELOG.md) | What changed in each milestone. |

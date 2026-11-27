@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-about 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-about \- Show or set a repo\*(Aqs name and description (root or maintainer key)
+.SH SYNOPSIS
+\fBswarm about\fR [\fB\-\-name\fR] [\fB\-\-description\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIREPO\fR> 
+.SH DESCRIPTION
+Show or set a repo\*(Aqs name and description (root or maintainer key)
+.SH OPTIONS
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+New name, at most 64 bytes. "" removes it
+.TP
+\fB\-\-description\fR \fI<DESCRIPTION>\fR
+New one\-line description, at most 512 bytes. "" removes it
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIREPO\fR>
+A repo ID or link

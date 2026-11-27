@@ -1,0 +1,50 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr \- Merge requests: propose changes, discuss, review and merge them
+.SH SYNOPSIS
+\fBswarm mr\fR [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-offline\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Merge requests: propose changes, discuss, review and merge them
+.SH OPTIONS
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+swarm\-mr\-list(1)
+List open merge requests
+.TP
+swarm\-mr\-show(1)
+Show one merge request, its commits and conversation
+.TP
+swarm\-mr\-create(1)
+Propose a branch; run it again to add your new commits
+.TP
+swarm\-mr\-comment(1)
+Comment on a merge request, a file in it, or another comment
+.TP
+swarm\-mr\-review(1)
+Approve a merge request or ask for changes
+.TP
+swarm\-mr\-checkout(1)
+Check out the proposed commits as branch mr/ID
+.TP
+swarm\-mr\-diff(1)
+Show the proposed changes
+.TP
+swarm\-mr\-merge(1)
+Merge into the target branch and publish (root or maintainer key)
+.TP
+swarm\-mr\-close(1)
+Close without merging (its author or a maintainer)
+.TP
+swarm\-mr\-reopen(1)
+Reopen a closed merge request

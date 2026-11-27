@@ -396,6 +396,7 @@ pub async fn fork(state: &DaemonState, args: &Value) -> Result<Value, IpcError> 
         .map_err(|err| IpcError::new(err.to_string(), err.to_string()))?;
     let stored = StoredManifest::from(envelope);
     store.persist_state(&accepted)?;
+    inherit_about(&source_store, &store, &accepted, &*signer)?;
     {
         let db = state
             .db
@@ -417,6 +418,33 @@ pub async fn fork(state: &DaemonState, args: &Value) -> Result<Value, IpcError> 
         "object_format": outcome.object_format,
         "seq": 1,
     }))
+}
+
+/// Give a fork the name and description its source has now, signed with the
+/// fork's own key. Later changes to the source do not follow.
+fn inherit_about(
+    source: &RepoStore,
+    fork: &RepoStore,
+    accepted: &AcceptState,
+    signer: &dyn swarm_core::pq::Signer,
+) -> Result<(), IpcError> {
+    let clock = now() as u64;
+    let Some(from) = source.load_about(&source.load_state()?, clock) else {
+        return Ok(());
+    };
+    if from.about.name.is_empty() && from.about.description.is_empty() {
+        return Ok(());
+    }
+    let record = swarm_core::About {
+        repo_id: *fork.repo_id().as_bytes(),
+        revision: clock,
+        signer_keys: signer.bundle(),
+        ..from.about
+    }
+    .sign(signer)
+    .map_err(|err| IpcError::new(err.to_string(), err.to_string()))?;
+    fork.write_about(&record, accepted, clock)?;
+    Ok(())
 }
 
 /// `gc`: repack and prune the bare store (ST-7). It refuses with `busy`

@@ -41,7 +41,7 @@ async fn a_pinned_relay_key_must_match() {
 async fn published_topics_name_the_proven_node() {
     let h = start().await;
     let b = key();
-    let topic = swarm_relay::topic(&[3; 32]);
+    let topic = swarm_relay::topic(&[3; 32], 9);
     assert!(swarm_relay::lookup(&h.1, topic).await.unwrap().is_empty());
     swarm_relay::publish(&h.1, &b, &[topic], None)
         .await

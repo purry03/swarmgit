@@ -126,8 +126,8 @@ complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcomma
 complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from comment" -s h -l help -d 'Print help'
 complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -s m -l message -d 'What you think' -r
 complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -s R -l repo -d 'A repo ID or link; by default the swarm remote of this clone' -r
-complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -l approve
-complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -l request-changes
+complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -l approve -d 'Approve the commits as they are now'
+complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -l request-changes -d 'Ask for changes; say which with -m'
 complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -l offline -d 'Use what is already here instead of syncing first'
 complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from review" -s h -l help -d 'Print help'
 complete -c swarm -n "__fish_swarm_using_subcommand mr; and __fish_seen_subcommand_from checkout" -s R -l repo -d 'A repo ID or link; by default the swarm remote of this clone' -r

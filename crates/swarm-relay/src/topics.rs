@@ -1,7 +1,9 @@
 //! Repo rendezvous topics (relay design spec milestone R6): a node that cannot
 //! accept connections tells the relays a topic belongs on that it serves it,
-//! and a dialer asks them which nodes do. A relay learns a hash of the repo ID,
-//! no more than the DHT does.
+//! and a dialer asks them which nodes do. A relay learns a hash of the repo ID
+//! that changes daily, like the DHT topic. It can still see that the same nodes
+//! publish yesterday's and today's: rotation stops an old topic from naming
+//! holders and moves it between discovered relays, no more than that.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -16,10 +18,14 @@ pub(crate) const TOPIC_TTL: Duration = Duration::from_secs(60 * 60);
 /// Topics held at once.
 const MAX_TOPICS: usize = 20_000;
 
-/// The topic of a repo: its ID hashed under a fixed key.
+/// The topic of a repo on `day`, days since the Unix epoch: its ID and the day
+/// hashed under a fixed key.
 #[must_use]
-pub fn topic(repo: &[u8; 32]) -> [u8; 32] {
-    *blake3::keyed_hash(&blake3::derive_key(CTX_TOPIC, b""), repo).as_bytes()
+pub fn topic(repo: &[u8; 32], day: u64) -> [u8; 32] {
+    let mut input = [0; 40];
+    input[..32].copy_from_slice(repo);
+    input[32..].copy_from_slice(&day.to_be_bytes());
+    *blake3::keyed_hash(&blake3::derive_key(CTX_TOPIC, b""), &input).as_bytes()
 }
 
 type Holders = HashMap<[u8; 32], Instant>;
@@ -85,15 +91,16 @@ mod tests {
     #[test]
     fn a_topic_hides_the_repo_and_keeps_the_newest_holders() {
         let repo = [7; 32];
-        assert_ne!(topic(&repo), repo);
-        assert_eq!(topic(&repo), topic(&repo));
-        assert_ne!(topic(&repo), topic(&[8; 32]));
+        assert_ne!(topic(&repo, 9), repo);
+        assert_eq!(topic(&repo, 9), topic(&repo, 9));
+        assert_ne!(topic(&repo, 9), topic(&repo, 10));
+        assert_ne!(topic(&repo, 9), topic(&[8; 32], 9));
 
         let topics = Topics::default();
         for n in 0..=MAX_HOLDERS as u8 {
-            topics.publish([n; 32], &[topic(&repo)]);
+            topics.publish([n; 32], &[topic(&repo, 9)]);
         }
-        let holders = topics.holders(&topic(&repo));
+        let holders = topics.holders(&topic(&repo, 9));
         assert_eq!(holders.len(), MAX_HOLDERS);
         assert!(holders.contains(&[MAX_HOLDERS as u8; 32]));
         assert!(!holders.contains(&[0; 32]), "the oldest makes room");

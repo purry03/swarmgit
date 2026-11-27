@@ -1,0 +1,34 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr-comment 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr\-comment \- Comment on a merge request, a file in it, or another comment
+.SH SYNOPSIS
+\fBswarm mr comment\fR [\fB\-m\fR|\fB\-\-message\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-file\fR] [\fB\-\-offline\fR] [\fB\-\-line\fR] [\fB\-\-reply\-to\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIMR\fR] 
+.SH DESCRIPTION
+Comment on a merge request, a file in it, or another comment
+.SH OPTIONS
+.TP
+\fB\-m\fR, \fB\-\-message\fR \fI<MESSAGE>\fR
+The comment; without it your git editor opens
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-file\fR \fI<PATH>\fR
+File the comment is about
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-\-line\fR \fI<LINE>\fR
+Line of that file
+.TP
+\fB\-\-reply\-to\fR \fI<COMMENT>\fR
+Comment being answered, by the ID shown before it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIMR\fR]
+Its branch or ID (default: the current branch)

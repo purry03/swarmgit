@@ -261,8 +261,10 @@ pub(super) enum MrCmd {
     Review {
         /// Its branch or ID (default: the current branch).
         mr: Option<String>,
+        /// Approve the commits as they are now.
         #[arg(long, group = "verdict")]
         approve: bool,
+        /// Ask for changes; say which with -m.
         #[arg(long, group = "verdict")]
         request_changes: bool,
         /// What you think.

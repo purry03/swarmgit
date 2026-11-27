@@ -1,4 +1,4 @@
-# Release: pushing a tag vX.Y.Z tests the code, builds every package with
+# Release: pushing a tag vX.Y.Z runs ci.yml, builds every package with
 # scripts/package.sh and publishes them as a GitHub release. The tag must match
 # the workspace version in Cargo.toml.
 #
@@ -24,11 +24,11 @@ env:
   ZIGBUILD_VERSION: 0.24.1
 
 jobs:
-  test:
+  version:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tag matches Cargo.toml
         if: github.ref_type == 'tag'
         run: |
@@ -38,22 +38,17 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME, but Cargo.toml says $version"
             exit 1
           fi
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Test
-        env:
-          SWARM_NO_DHT: "1"
-          SWARM_NO_UPNP: "1"
-        run: cargo test --locked --workspace -q
+
+  test:
+    needs: version
+    uses: ./.github/workflows/ci.yml
 
   build:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install packaging tools
         run: |
           sudo apt-get update
@@ -81,7 +76,7 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- *.deb *.rpm *.tar.gz >SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: dist/
@@ -94,7 +89,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: packages
           path: dist

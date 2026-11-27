@@ -253,8 +253,8 @@ _arguments "${_arguments_options[@]}" : \
 '--message=[What you think]:MESSAGE:_default' \
 '-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
 '--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
-'--approve[]' \
-'--request-changes[]' \
+'--approve[Approve the commits as they are now]' \
+'--request-changes[Ask for changes; say which with -m]' \
 '--offline[Use what is already here instead of syncing first]' \
 '-h[Print help]' \
 '--help[Print help]' \

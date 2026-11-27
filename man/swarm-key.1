@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-key 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-key \- Key management
+.SH SYNOPSIS
+\fBswarm key\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Key management
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+swarm\-key\-recovery(1)
+Create a recovery key, name it in the repo, and save it to FILE (keep it offline)
+.TP
+swarm\-key\-rotate(1)
+Move the root to a new key, authorized by the recovery key file
+.TP
+swarm\-key\-new(1)
+Create this machine\*(Aqs own key for a repo, to be authorized by the root
+.TP
+swarm\-key\-id(1)
+Print the key ID of this machine\*(Aqs key for a repo
+.TP
+swarm\-key\-backup(1)
+Copy a repo signing key to FILE with mode 0600

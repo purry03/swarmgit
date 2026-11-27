@@ -100,4 +100,19 @@ expect "$SEEN" "\"upstream\":{\"link\":\"swarm://$REPO\""
 expect "$(c swarm inspect "$FORK")" "forked from: swarm://$REPO"
 expect "$(c swarm inspect "$LINK")" "fork: swarm://${FORK:8:52}"
 
+echo "== a fork starts with the name and description of its source"
+a swarm about "$REPO" --description "first words" >/dev/null
+NAMED=$(b swarm fork "$LINK")
+expect "$(b swarm about "${NAMED:8:52}")" 'name: demo'
+expect "$(b swarm about "${NAMED:8:52}")" 'description: first words'
+# A visitor stays connected and holds no copy of the record; the owner's own
+# inspect still has it.
+c swarm inspect "$NAMED" >/dev/null
+SEEN=$(b swarm inspect "$NAMED")
+expect "$SEEN" 'name: demo'
+expect "$SEEN" 'description: first words'
+b swarm about "${NAMED:8:52}" --name mine >/dev/null
+expect "$(b swarm about "${NAMED:8:52}")" 'name: mine'
+expect "$(a swarm about "$REPO")" 'name: demo'
+
 echo "ABOUT PASS"

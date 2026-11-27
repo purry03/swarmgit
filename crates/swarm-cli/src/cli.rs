@@ -657,6 +657,115 @@ pub async fn run(args: Vec<String>) -> i32 {
 }
 
 #[cfg(test)]
+mod man_tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    /// Sections of `swarm.1` that the command definitions do not carry.
+    const EXTRA: &str = r#".SH EXAMPLES
+Publish the repository you are in, then clone it elsewhere with its link:
+.PP
+.nf
+swarm init
+git push swarm main
+git clone \(aqswarm://...\(aq
+.fi
+.PP
+Propose a branch for someone else\(aqs repository, from a clone of it:
+.PP
+.nf
+git checkout \-b fix
+git commit \-am "Fix the thing"
+swarm mr create
+.fi
+.SH ENVIRONMENT
+.TP
+SWARM_HOME
+Where keys, repositories and the daemon\(aqs files are kept.
+.TP
+SWARM_CONFIG
+The configuration file to read.
+.SH FILES
+.TP
+/etc/swarmgit/config.yaml, ~/.config/swarmgit/config.yaml
+Settings.
+.SH SEE ALSO
+.BR git (1).
+Each command has its own page, such as
+.BR swarm\-mr (1).
+The user guide is at https://swarmgit.com/docs.
+"#;
+
+    /// The description of `swarm.1`.
+    const ABOUT: &str = "Swarmgit is a peer-to-peer git remote. A repository has \
+        a swarm:// link, and anyone who can reach a peer holding it can clone it, \
+        with no server and no account. You keep using git; the git-remote-swarm \
+        helper handles swarm:// remotes, and a background daemon talks to peers. \
+        Pushing needs the repository's root or maintainer key, while anyone with \
+        the link can open and discuss merge requests.";
+
+    /// Every page, by file name.
+    fn pages() -> Vec<(String, String)> {
+        // No page exists for `help`, so it is not listed.
+        let mut command = Cli::command().disable_help_subcommand(true);
+        command.build();
+        let mut pages = Vec::new();
+        add(&command, "swarm", &mut pages);
+        pages
+    }
+
+    fn add(command: &clap::Command, name: &str, pages: &mut Vec<(String, String)>) {
+        // clap wants static names; a test can afford to leak them.
+        let title: &'static str = Box::leak(name.to_string().into_boxed_str());
+        let mut titled = command.clone().name(title).display_name(title);
+        if name == "swarm" {
+            titled = titled.long_about(ABOUT);
+        }
+        let mut out = Vec::new();
+        clap_mangen::Man::new(titled)
+            .source(format!("swarm {}", env!("CARGO_PKG_VERSION")))
+            .manual("Swarmgit manual")
+            .render(&mut out)
+            .expect("writing to memory");
+        let mut text = String::from_utf8(out).expect("man pages are UTF-8");
+        if name == "swarm" {
+            text.push_str(EXTRA);
+        }
+        pages.push((format!("{name}.1"), text));
+        for sub in command.get_subcommands() {
+            if !sub.is_hide_set() && sub.get_name() != "help" {
+                add(sub, &format!("{name}-{}", sub.get_name()), pages);
+            }
+        }
+    }
+
+    /// `man/` holds the pages the packages install. `scripts/gen-completions.sh`
+    /// rewrites them by running this with `SWARM_WRITE_MAN` set.
+    #[test]
+    fn shipped_man_pages_are_current() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../man");
+        let pages = pages();
+        if std::env::var_os("SWARM_WRITE_MAN").is_some() {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("man/");
+            for (file, text) in &pages {
+                std::fs::write(dir.join(file), text).expect("write a man page");
+            }
+        }
+        for (file, text) in &pages {
+            let have = std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+            assert!(
+                have == *text,
+                "man/{file} is stale: run scripts/gen-completions.sh"
+            );
+        }
+        let shipped = std::fs::read_dir(&dir).expect("man/").count();
+        assert_eq!(shipped, pages.len(), "man/ has pages for removed commands");
+    }
+}
+
+#[cfg(test)]
 mod completion_tests {
     use super::*;
 

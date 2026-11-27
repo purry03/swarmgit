@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-export 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-export \- Write a repo and its signed state to a bundle file for offline transfer
+.SH SYNOPSIS
+\fBswarm export\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fILINK\fR> 
+.SH DESCRIPTION
+Write a repo and its signed state to a bundle file for offline transfer
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<FILE>\fR
+Bundle file to write
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fILINK\fR>
+A repo ID or link

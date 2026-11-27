@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-status-peers 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-status\-peers \- Peers known for each repo, and which are connected
+.SH SYNOPSIS
+\fBswarm status peers\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREPO\fR] 
+.SH DESCRIPTION
+Peers known for each repo, and which are connected
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIREPO\fR]
+Only this repo

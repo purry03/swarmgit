@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-accept 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-accept \- Settle a ref conflict here by taking one signer\*(Aqs value
+.SH SYNOPSIS
+\fBswarm accept\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIREPO\fR> <\fIREFNAME\fR> <\fISIGNER\fR> 
+.SH DESCRIPTION
+Settle a ref conflict here by taking one signer\*(Aqs value
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIREPO\fR>
+A repo ID or link
+.TP
+<\fIREFNAME\fR>
+The ref in conflict, for example refs/heads/main
+.TP
+<\fISIGNER\fR>
+The signer (key ID, hex or base32) whose value to take

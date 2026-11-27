@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr-merge 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr\-merge \- Merge into the target branch and publish (root or maintainer key)
+.SH SYNOPSIS
+\fBswarm mr merge\fR [\fB\-\-no\-push\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-offline\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIMR\fR> 
+.SH DESCRIPTION
+Merge into the target branch and publish (root or maintainer key)
+.SH OPTIONS
+.TP
+\fB\-\-no\-push\fR
+Make the merge commit but do not push it
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIMR\fR>
+Its branch or ID

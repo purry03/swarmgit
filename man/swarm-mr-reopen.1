@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr-reopen 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr\-reopen \- Reopen a closed merge request
+.SH SYNOPSIS
+\fBswarm mr reopen\fR [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-offline\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIMR\fR> 
+.SH DESCRIPTION
+Reopen a closed merge request
+.SH OPTIONS
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIMR\fR>
+Its branch or ID

@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-unseed 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-unseed \- Stop serving a repo but keep its store
+.SH SYNOPSIS
+\fBswarm unseed\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fILINK\fR> 
+.SH DESCRIPTION
+Stop serving a repo but keep its store
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fILINK\fR>
+A repo ID or link

@@ -19,9 +19,9 @@ fi
 
 # Root inside the container: keep build output apart from the host's target/
 # and hand it back to the host user afterwards.
-export CARGO_TARGET_DIR=/workspace/target/ci
+export CARGO_TARGET_DIR=$PWD/target/ci
 export SWARM_BIN_DIR=$CARGO_TARGET_DIR/debug
-git config --global --add safe.directory /workspace
+git config --global --add safe.directory "$PWD"
 trap 'chown -R "${HOST_UID:-1000}:${HOST_GID:-1000}" "$CARGO_TARGET_DIR" 2>/dev/null || true' EXIT
 
 step() { printf '\n== %s\n' "$*"; }
@@ -30,15 +30,15 @@ step "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "cargo clippy -D warnings"
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --locked --workspace --all-targets -- -D warnings
 
 step "cargo test"
 # INV-5: every earlier test passes with the DHT off; the DHT unit tests run
 # their own local testnet regardless. No test maps ports on a real gateway.
-SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --workspace -q
+SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --locked --workspace -q
 
 step "cargo build"
-cargo build --workspace -q
+cargo build --locked --workspace -q
 
 for script in tests/e2e/m1.sh tests/e2e/m2.sh tests/e2e/lan.sh \
     tests/e2e/dht.sh tests/e2e/m5.sh tests/e2e/m6.sh tests/e2e/m7.sh tests/e2e/m8.sh \

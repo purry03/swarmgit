@@ -4,8 +4,20 @@ All notable changes to Swarmgit are recorded here.
 
 ## Unreleased
 
+### Changed
+
+- The repo topic published to relays now changes daily. Older and newer clients
+  can no longer find each other by repo ID alone through a relay; link hints,
+  node IDs and peer exchange still work. Relays need no update.
+
 ### Added
 
+- The client and relay guides are rewritten: installing and upgrading, running
+  as a service, reachability, keys and recovery, firewall and DNS setup, and
+  troubleshooting with the messages shown.
+- Man pages: `man swarm`, and one per command such as `man swarm-mr-create`.
+  The .deb and .rpm install them, and the .tar.gz carries them in `share/man`.
+- A fork starts with its source's name and description.
 - `swarm inspect` lists branches and tags, the repo a fork came from, and the
   forks of it held on this machine (`branches`, `tags`, `upstream` and
   `downstream` in `--json`).

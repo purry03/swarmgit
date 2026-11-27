@@ -1,172 +1,419 @@
 # Swarmgit relay operator guide
 
-This guide covers running a relay server, configuring Swarmgit clients to use
-it, and operating it safely. A relay is optional: direct peer connections,
-LAN, global lookup, peer exchange, and offline bundles continue to work
-without one.
+This guide covers installing a relay server, connecting clients to it, and
+running it safely. A relay is optional: direct connections, the local network,
+the DHT, peer exchange and offline bundles work without one. For the client,
+see the [client guide](USER-GUIDE.md).
 
 ## 1. What a relay does
 
-A relay makes a peer reachable when its NAT, carrier-grade NAT, mobile network,
-or firewall prevents inbound connections. The seeder keeps an outbound
-control connection to the relay. When a cloner asks for that seeder's node ID,
-the relay notifies it; the seeder opens a second outbound connection, and the
-relay joins that connection to the cloner's outbound connection.
+A relay makes a peer reachable when NAT, carrier-grade NAT, a mobile network or
+a firewall blocks inbound connections. The seeder keeps an outbound connection
+to the relay. When someone asks for that seeder's node ID, the relay tells it,
+the seeder opens a second outbound connection, and the relay joins the two.
 
 ```text
 Seeder ── control connection ──▶ Relay ◀── outbound dial ── Cloner
 Seeder ◀── accept connection ─── Relay ══ byte stream ══ Cloner
 ```
 
-The relay is a transport, not a Git server. The regular authenticated,
-encrypted Swarmgit session runs between the peers through the byte stream. The
-relay does not store repository data.
+The relay is a transport, not a git server. The encrypted Swarmgit session runs
+between the two peers through it. The relay stores no repository data.
 
 Swarmgit ships no default relay. Clients use the relays you configure, the
-relay hints in links, and (unless `relay_discovery` is `off`) public relays
-they find through the DHT. Run your own if you do not want to depend on
-strangers.
+relay hints in links and, unless `relay_discovery` is `off`, public relays they
+find through the DHT.
 
-## 2. Requirements and network setup
+### Which kind to run
 
-- Run the relay on a host with a stable, publicly reachable IP address. If the
-  host itself is behind NAT, forward its relay port.
-- Point a stable DNS name (or public IP) at the host.
-- Allow inbound **TCP** on port `42425` in the host firewall and any cloud
-  firewall/security group. Allow **UDP** on the same port too if peers will
-  try experimental hole punching: the relay answers their address probes
-  there. Without it relayed connections still work.
-- Use the same public `host:port` in the server's `--name`, the seeder's
-  `relays` setting, and the relay hints clients receive.
+| Kind | Who can use it | How |
+| --- | --- | --- |
+| Unlisted | Anyone you give the address to | `--no-network`. The package default. |
+| Private | Only clients with its key and password | `--password-file` and `--key-file` |
+| Public | Any Swarmgit user can find it | Remove `--no-network` |
 
-The relay name matters: clients dial it, and the seeder's registration proof
-is bound to the exact name it used. If you change the public host or port,
-update the server settings and client configuration, then restart the
-affected services and share a fresh link.
+## 2. Requirements
 
-## 3. Install the relay
+- A Linux server with a stable public IP address. Behind NAT, forward the port.
+- Preferably a DNS name pointing at it, such as `relay.example.org`.
+- Inbound **TCP 42425**. Also **UDP 42425** if clients use experimental hole
+  punching.
+- Little CPU and memory. Bandwidth is the real cost: every relayed byte comes
+  in and goes out again.
 
-### Debian or Ubuntu, x86-64
+If the relay host runs a peer too, that peer uses TCP 42424 by default, which
+does not clash.
 
-Download `swarm-relay_0.1.0_amd64.deb` from the Relay section of the Swarmgit
-home page, then install it:
+### DNS
+
+Create an `A` record (and `AAAA` for IPv6) for the name, pointing at the
+server. It must reach the server directly. An HTTP proxy or CDN in front of the
+name, such as a proxied Cloudflare record, does not pass relay connections.
+
+### Firewall
+
+With `ufw`, make sure SSH is allowed **before** turning the firewall on:
 
 ```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 42425/tcp
+sudo ufw allow 42425/udp
+sudo ufw enable
+sudo ufw status
+```
+
+With `firewalld`:
+
+```bash
+sudo firewall-cmd --permanent --add-port=42425/tcp
+sudo firewall-cmd --permanent --add-port=42425/udp
+sudo firewall-cmd --reload
+```
+
+Open the same ports in your cloud provider's firewall or security group.
+
+## 3. Quick start
+
+On a Debian or Ubuntu server with a DNS name already pointing at it:
+
+```bash
+curl -O https://swarmgit.com/downloads/swarm-relay_0.1.0_amd64.deb
 sudo apt install ./swarm-relay_0.1.0_amd64.deb
 sudoedit /etc/default/swarm-relay
 ```
 
-The package installs `/usr/bin/swarm-relay`, the systemd unit, and
-`/etc/default/swarm-relay`. It creates the unprivileged `swarm-relay` service
-account and enables and starts the service. Set the public `--name` before
-relying on the relay. The package's default arguments listen on
-`0.0.0.0:42425` but leave the name unset.
+Set this line, with your own name:
 
-To upgrade, install the newer package. To keep your edited
-`/etc/default/swarm-relay`, answer "keep" if asked about it, or install with
-`sudo dpkg --force-confold -i swarm-relay_*.deb`. An existing file keeps its
-old arguments, so it does not pick up new package defaults such as
-`--no-network`.
+```bash
+SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --name relay.example.org:42425 --no-network --key-file /var/lib/swarm-relay/relay.key"
+```
+
+Then restart and check:
+
+```bash
+sudo systemctl restart swarm-relay
+systemctl is-active swarm-relay
+sudo journalctl -u swarm-relay -n 20 --no-pager
+```
+
+The log should show `relay listening on 0.0.0.0:42425` and
+`relay address: relay.example.org:42425#<key>`.
+
+On the machine that needs to be reachable, add the relay and restart its
+daemon:
+
+```yaml
+# ~/.config/swarmgit/config.yaml
+relays:
+  - relay.example.org:42425
+relay_mode: always
+```
+
+```bash
+swarm daemon restart
+swarm status relays
+swarm link
+```
+
+`swarm status relays` should say `registered`, and the link should contain
+`h=relay:relay.example.org:42425@<node-id>`. `relay_mode: always` makes the
+test work even if the machine can already be reached directly; remove it
+afterwards to use the relay only when needed.
+
+Finally, clone that link from a different network.
+
+## 4. Install
+
+### Debian and Ubuntu
+
+Packages: `swarm-relay_0.1.0_amd64.deb` and `swarm-relay_0.1.0_arm64.deb` from
+`https://swarmgit.com/downloads/`. Check them against `SHA256SUMS` there:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+sudo apt install ./swarm-relay_0.1.0_amd64.deb
+```
+
+The package installs:
+
+| Path | Purpose |
+| --- | --- |
+| `/usr/bin/swarm-relay` | The server. |
+| `/lib/systemd/system/swarm-relay.service` | The service unit. |
+| `/etc/default/swarm-relay` | Its arguments. |
+| `/var/lib/swarm-relay/` | Its key, created on first start. |
+
+It creates the unprivileged `swarm-relay` account, then enables and starts the
+service. The default arguments listen on `0.0.0.0:42425`, stay out of the
+public network and set no `--name`. Set your name before relying on it.
+
+### Fedora and RHEL
+
+The RPM is built with `scripts/package.sh --rpm` as
+`swarm-relay-0.1.0-1.x86_64.rpm` (or `aarch64`):
+
+```bash
+sudo dnf install ./swarm-relay-0.1.0-1.x86_64.rpm
+```
+
+It uses the same unit and settings file.
+
+### Archive
+
+The client archives also contain `bin/swarm-relay`. Copy it to
+`/usr/local/bin/`, create the account, and save this as
+`/etc/systemd/system/swarm-relay.service`:
+
+```ini
+[Unit]
+Description=Swarmgit relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=swarm-relay
+Group=swarm-relay
+ExecStart=/usr/local/bin/swarm-relay --listen 0.0.0.0:42425 --name relay.example.org:42425 --no-network --key-file /var/lib/swarm-relay/relay.key
+StateDirectory=swarm-relay
+StateDirectoryMode=0700
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo useradd -r -M -d /nonexistent -s /usr/sbin/nologin swarm-relay
+sudo systemctl daemon-reload
+sudo systemctl enable --now swarm-relay
+```
+
+### Run by hand
+
+Useful for a test. `swarm relay` in the client takes the same options.
+
+```bash
+swarm-relay --listen 0.0.0.0:42425 --name relay.example.org:42425 \
+  --key-file relay.key --no-network
+```
+
+Stop it with Ctrl-C. Without `--no-network` it joins the public network.
 
 ### Build from source
-
-The workspace pins a Rust toolchain. Build in the development container if
-your host toolchain cannot read the project toolchain:
 
 ```bash
 docker compose run --rm dev cargo build --release -p swarm-relay
 ```
 
-The binary is `target/release/swarm-relay`. For a manual test, run:
+The binary is `target/release/swarm-relay`.
 
-```bash
-./target/release/swarm-relay \
-  --listen 0.0.0.0:42425 \
-  --name relay.example.org:42425
-```
+## 5. Configure the server
 
-Stop a manually run relay with Ctrl-C. For a persistent deployment, use the
-packaged systemd service or create an equivalent service for your platform.
-
-## 4. Configure and operate the server
-
-For the Debian/Ubuntu package, edit `/etc/default/swarm-relay`:
-
-```bash
-SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --name relay.example.org:42425 --key-file /var/lib/swarm-relay/relay.key"
-```
-
-`--listen` is the local bind address. `--name` is the public `host:port`
-clients will dial. Repeat `--name` to support multiple public names. Avoid
-leaving `--name` unset on a public relay: without it, registration proofs are
-not bound to a configured public name.
-
-Restart and inspect the service:
+The package reads its arguments from `/etc/default/swarm-relay`. After editing:
 
 ```bash
 sudo systemctl restart swarm-relay
 sudo systemctl status swarm-relay
-sudo journalctl -u swarm-relay -f
 sudo ss -ltnp | grep 42425
 ```
 
-The packaged service runs as the `swarm-relay` user, restarts after failure,
-and sets `LimitNOFILE=65536`.
+A restart drops the sessions in progress. Registered clients reconnect by
+themselves.
 
-### Server options
+### The name
 
-`swarm relay` takes the same options as `swarm-relay`.
+`--listen` is the local address to bind. `--name` is the public `host:port`
+that clients dial, and it must match what they configure, character for
+character in host and port. A client's registration proof is bound to it: if
+they differ, the client reports `auth_failed: proof rejected`. Repeat `--name`
+to accept more than one name.
 
-```text
---listen ADDRESS          Bind address (default 0.0.0.0:42425)
---name HOST:PORT          Public client-facing name; repeatable
---key-file FILE           Keep the relay key, so host:port#key addresses last
---password-file FILE      Require a shared secret (needs --key-file)
---allow-node NODE_ID      Let only this node register; repeatable
---metrics ADDR            Counters over HTTP (off by default)
---max-listeners N         Registered peers (default 10000)
---listeners-per-ip N      Registered peers per address (default 2)
---max-splices N           Simultaneous relayed sessions (default 500)
---splices-per-ip N        Open sessions per dialing address (default 8)
---connects-per-minute N   Connect attempts per address (default 20)
---splice-kib-per-sec N    Rate of one session (default 8192, 0 for none)
---node-daily-mib N        Bytes carried per target node per day (default 10240)
---idle-secs N             Close an idle session (default 120)
---no-network              No DHT announce and no gossip
---public                  Announce without first being dialed back
---allow-private           Accept private relay addresses (closed networks)
---round-secs N            Seconds between gossip rounds (default 1800)
+Without `--name`, any name is accepted and proofs are not bound to your relay.
+Do not run a public relay that way.
+
+If you change the host or port, update the server and clients together, and
+have seeders share a new `swarm link`.
+
+### The key
+
+`--key-file` keeps the relay's key across restarts, so that addresses of the
+form `host:port#key` keep working. The log prints that address at each start:
+
+```bash
+sudo journalctl -u swarm-relay | grep 'relay address' | tail -1
 ```
 
-The pending-request limit is 1,000, and a pending request expires after
-10 seconds. A silent listener control connection is closed after 75 seconds.
-Per-address limits do not apply to loopback; IPv6 addresses are counted by
-/64.
+Clients that use `#<key>` refuse any server that does not hold this key. Back
+the file up:
 
-### The relay network
+```bash
+sudo cp /var/lib/swarm-relay/relay.key /root/relay.key.backup
+```
 
-By default a relay joins the public relay network: it announces itself on the
-Mainline DHT once another relay has dialed it back, and trades relay addresses
-with the others. The first relay of an empty network needs `--public`. Use
-`--no-network` to stay out. A relay with a password or `--allow-node` never
-joins. The Debian and RPM packages default to `--no-network`.
+### Options
 
-If a `--name` is a domain, clients that find the relay check that it resolves to
-the address they dialed, then show it and put it into share links instead of the
-IP. Links then survive a change of address.
+| Option | Purpose | Default |
+| --- | --- | --- |
+| `--listen ADDRESS` | Bind address. | `0.0.0.0:42425` |
+| `--name HOST:PORT` | Public name; repeatable. | none |
+| `--key-file FILE` | Keep the relay key. | new key each start |
+| `--password-file FILE` | Require a shared secret; needs `--key-file`. | off |
+| `--allow-node NODE_ID` | Let only this node register; repeatable. | all nodes |
+| `--metrics ADDR` | Counters over HTTP. | off |
+| `--max-listeners N` | Registered peers. | 10000 |
+| `--listeners-per-ip N` | Registered peers per address. | 2 |
+| `--max-splices N` | Relayed sessions at once. | 500 |
+| `--splices-per-ip N` | Sessions per dialing address. | 8 |
+| `--connects-per-minute N` | Connect attempts per address. | 20 |
+| `--splice-kib-per-sec N` | Rate of one session; 0 for no limit. | 8192 |
+| `--node-daily-mib N` | Bytes per target node per day. | 10240 |
+| `--idle-secs N` | Close an idle session. | 120 |
+| `--no-network` | No DHT announce and no gossip. | off |
+| `--public` | Announce without first being dialed back. | off |
+| `--allow-private` | Accept private relay addresses, for closed networks. | off |
+| `--round-secs N` | Seconds between gossip rounds. | 1800 |
 
-To make your relay one that clients find without listing it, remove
-`--no-network`, add `--public` if no other relay can dial it back, and
-restart. With debug logging on (see Logs below), `relay directory announce
-done=true` means the announcement was stored. From another machine,
-`swarm discover-relays` should then list it. Before you do this:
+At most 1,000 requests wait at once, each for 10 seconds. A silent control
+connection is closed after 75 seconds. Per-address limits do not apply to
+loopback, and IPv6 addresses are counted by /64.
 
-- Anyone can then use the relay, within the limits in section 7.
-- Unrelated hosts will connect to the port. Expect debug lines such as
-  `relay protocol: bad frame length`, most likely BitTorrent clients and
-  crawlers that saw the DHT announcement. The relay drops them.
-- A client with several relays to choose from may pick another one. List
-  yours in `relays` where it matters.
+### A private relay
+
+Create the password file so only the service can read it:
+
+```bash
+openssl rand -base64 32 | sudo tee /etc/swarm-relay.password >/dev/null
+sudo chown root:swarm-relay /etc/swarm-relay.password
+sudo chmod 640 /etc/swarm-relay.password
+```
+
+Add `--password-file /etc/swarm-relay.password` to the arguments and restart.
+Give users the full address from the log and the password:
+
+```yaml
+relays:
+  - relay.example.org:42425#<key>
+relay_password: <the password>
+```
+
+A client sends the password only to an address that includes the key, so a
+machine that merely answers on your name never receives it. Links never carry
+the key or password: every machine that dials the relay, including one that
+only clones through it, needs both in its settings. A private relay never joins
+the public network.
+
+To restrict who may register instead, use `--allow-node <node-id>` once per
+machine. `swarm status` on a client shows its node ID. This limits who can be
+reached through the relay, not who can dial them.
+
+### A public relay
+
+Remove `--no-network` and restart. The relay announces itself on the DHT once
+another relay has dialed it back, and exchanges relay addresses with others. If
+no other relay can dial it back, such as the first one of an empty network, add
+`--public`.
+
+```bash
+SWARM_RELAY_ARGS="--listen 0.0.0.0:42425 --name relay.example.org:42425 --public --key-file /var/lib/swarm-relay/relay.key"
+```
+
+If the name is a domain that resolves to the address clients dialed, they show
+it and put it into share links instead of the IP address, so links survive an
+address change.
+
+With debug logging on, `relay directory announce done=true` means the
+announcement was stored. From another machine, `swarm discover-relays` should
+then list the relay.
+
+Before you do this:
+
+- Anyone can use the relay, within the limits above. You pay for the traffic.
+- Unrelated hosts will connect to the port. Debug lines such as
+  `relay protocol: bad frame length` are most likely BitTorrent clients and
+  crawlers that saw the DHT announcement. They are dropped.
+- A client with several relays may pick another one. Users who want yours
+  should list it in `relays`.
+
+### A relay as an onion service
+
+Tor can publish a relay without changes to it. In `torrc`:
+
+```text
+HiddenServiceDir /var/lib/tor/swarm-relay/
+HiddenServicePort 42425 127.0.0.1:42425
+```
+
+Run with `--listen 127.0.0.1:42425 --name <name>.onion:42425 --no-network`.
+Clients need `proxy` set; an onion relay is never dialed without one. See the
+[Tor guide](TOR-GUIDE.md).
+
+## 6. Connect clients
+
+### The seeder
+
+Configure the machine that must be reachable, in
+`~/.config/swarmgit/config.yaml` for one user or `/etc/swarmgit/config.yaml`
+for the whole machine:
+
+```yaml
+relays:
+  - relay.example.org:42425
+```
+
+`SWARM_RELAYS` is the environment variable form and takes priority. At most two
+configured relays are used.
+
+```bash
+swarm daemon restart
+swarm seed 'swarm://<repo-id>'
+swarm status relays
+swarm link
+```
+
+If the daemon runs as a service, restart the service instead.
+
+| `swarm status relays` shows | Meaning |
+| --- | --- |
+| `registered` | Working. `DETAIL` shows the address the relay sees. |
+| `not registered` | `DETAIL` has the reason. |
+| `none in use` | No relay is configured or discovered, or `relay_mode` does not call for one. |
+
+Share the link printed by `swarm link`. An old link does not gain new relay
+hints by itself.
+
+`relay_mode` defaults to `auto`: register unless peers have recently reached
+this machine directly. `always` registers regardless. `off` never uses a relay,
+as seeder or cloner. With discovery on, a node also registers with public
+relays it found (at most 2 found, 3 in all), and only while it serves at least
+one repository. `relay_discovery: off` limits it to configured relays.
+Discovery is off behind a proxy.
+
+### The cloner
+
+Someone cloning needs only outbound access to the relay named in the link. No
+configuration is needed:
+
+```bash
+git clone 'swarm://<repo-id>?h=relay:relay.example.org:42425@<node-id>' project
+```
+
+Direct addresses are tried first, with about 1.5 seconds' head start
+(`relay_delay_ms`), and the relay immediately if they fail. A cloner with only
+a node ID or repo ID can ask relays which of them holds it; they see a hash of
+the repo ID, never the ID. Relays do not forward to each other, so a transfer
+crosses at most one.
+
+`relay_max_bytes` (default 2 GiB) limits what one connection moves through a
+relay. With `experimental_udp` on at both ends, peers try to move to a direct
+UDP path and keep the relayed connection as a fallback.
+
+## 7. Operate the relay
 
 ### Logs
 
@@ -176,8 +423,7 @@ sudo journalctl -u swarm-relay | grep -E 'WARN|ERROR'
 ```
 
 The default level is `info`, which logs no line per registration or session.
-Check registration from the client with `swarm status relays`. For connection errors
-and relay network rounds, turn on debug logging:
+For connection errors and network rounds, turn on debug logging:
 
 ```bash
 sudo systemctl edit swarm-relay
@@ -187,215 +433,136 @@ sudo systemctl edit swarm-relay
 sudo systemctl restart swarm-relay
 ```
 
-Remove it afterwards with `sudo systemctl revert swarm-relay` and another
-restart. `revert` also removes any other overrides you made to the unit.
+Undo it with `sudo systemctl revert swarm-relay` and a restart. `revert` also
+removes any other overrides of the unit.
 
 | Log line | Meaning |
 | --- | --- |
-| `Our current id ... is not valid for address ... Using new id ...` | Normal, once per start. The DHT node picks an ID that matches the public IP (BEP 42). |
-| `mainline::rpc: Could not bootstrap the routing table` | Seen at start on relays and clients where announcing and discovery still worked. Check for `announce done=true` before treating it as a fault. |
-| `relay network round relays=0 reachable=true` | The relay is announcing itself and knows no other relay. |
-| `relay io: early eof` | The other end closed the connection while the relay was reading. Expected when a client daemon stops. |
+| `Our current id ... is not valid for address ... Using new id ...` | Normal, once per start. The DHT node picks an ID that matches the public IP. |
+| `mainline::rpc: Could not bootstrap the routing table` | Usually follows the line above, while the table is being rebuilt. Check for `announce done=true` before treating it as a fault. |
+| `relay network round relays=0 reachable=true` | Announcing, and no other relay known yet. |
+| `relay io: early eof` | The other end closed while the relay was reading. Expected when a client stops. |
 | `relay protocol: bad frame length` | The other end is not speaking the relay protocol. |
-| `relay auth: noise: decrypt error` | A client's encrypted handshake failed. If it keeps happening, check any `#<key>` in client addresses. Without `--key-file` the key changes at every restart. |
-
-### A private relay
-
-```bash
-printf '%s\n' 'a long secret' > relay.password
-swarm-relay --listen 0.0.0.0:42425 --name relay.example.org:42425 \
-  --key-file relay.key --password-file relay.password
-```
-
-The log prints `relay address: relay.example.org:42425#<key>`. Give that whole
-address and the password to your clients:
-
-```yaml
-relays:
-  - relay.example.org:42425#<key>
-relay_password: a long secret
-```
-
-A client sends the password only to an address that includes the key, so a
-machine that merely answers on your name never receives it. Without `#<key>`
-the client gets `auth_failed` and is told to add it. Links never carry the
-key: each machine that dials a private relay needs it in its own settings.
-Keep `relay.key`; a new key changes every client's address.
+| `relay auth: noise: decrypt error` | A client's encrypted handshake failed. If it repeats, check the `#<key>` in client addresses. |
 
 ### Metrics
 
-`--metrics 127.0.0.1:9100` serves `swarm_relay_listeners`,
-`swarm_relay_splices`, `swarm_relay_splices_total`,
-`swarm_relay_bytes_total`, `swarm_relay_auth_failures_total` and
-`swarm_relay_errors_total`. It has no authentication, so keep it local.
-
-### A relay as an onion service
-
-Tor can publish a relay; the relay itself needs no change. In `torrc`:
-
-```text
-HiddenServiceDir /var/lib/tor/swarm-relay/
-HiddenServicePort 42425 127.0.0.1:42425
-```
-
-Run it with `--listen 127.0.0.1:42425 --name <name>.onion:42425
---no-network`. Clients need `proxy` set; an onion relay is never dialed
-without one. See [the Tor guide](TOR-GUIDE.md).
-
-## 5. Register a seeder
-
-Configure the peer that must be reachable—usually the seeder—with the relay
-address. Use `/etc/swarmgit/config.yaml` for a system-wide setting, or
-`~/.config/swarmgit/config.yaml` for one user. Both are read, setting by
-setting, and the user file wins:
-
-```yaml
-relays:
-  - relay.example.org:42425
-```
-
-`SWARM_RELAYS=relay.example.org:42425` is the environment-variable equivalent.
-Environment variables override YAML settings. A node can use at most two
-configured relays.
-
-The daemon reads settings when it starts, so restart it:
+Add `--metrics 127.0.0.1:9100`, restart, then:
 
 ```bash
-swarm daemon restart
-swarm seed 'swarm://<repo-id>'
-swarm status relays
-swarm link
+curl http://127.0.0.1:9100/metrics
 ```
 
-Wait for `swarm status relays` to show the relay as `registered`.
-`not registered` has the reason under `DETAIL`. `none in use` means the daemon is using no relay: none is
-configured or discovered, or `relay_mode` does not call for one. Share the updated
-link from `swarm link`; it should include a pinned hint like:
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `swarm_relay_listeners` | gauge | Registered peers now. |
+| `swarm_relay_splices` | gauge | Relayed sessions now. |
+| `swarm_relay_splices_total` | counter | Sessions since start. |
+| `swarm_relay_bytes_total` | counter | Bytes carried since start. |
+| `swarm_relay_auth_failures_total` | counter | Failed authentications. |
+| `swarm_relay_errors_total` | counter | Connection errors. |
 
-```text
-h=relay:relay.example.org:42425@<node-id>
-```
+The endpoint has no authentication. Keep it on loopback.
 
-Use the full link printed by Swarmgit, which includes the repository ID and
-any direct or additional relay hints. An old link will not gain new relay
-hints by itself.
+### Upgrade
 
-`relay_mode` defaults to `auto`: register unless peers have recently reached
-this node directly. `always` registers regardless. `off` never uses a relay,
-as seeder or cloner. With discovery on, a node also registers with public
-relays it found (at most 2 found, 3 in all); `relay_discovery: off` limits it
-to configured ones. Discovery is off behind a proxy.
-
-A node registers with a discovered relay only while it serves at least one
-repository. To test discovery, use a fresh `SWARM_HOME` (the daemon remembers
-relays it has seen), remove the `relays` setting from every config file that
-defines it, make sure `relay_discovery` is on, and seed a repository there.
-Both `/etc/swarmgit/config.yaml` and `~/.config/swarmgit/config.yaml` are read;
-the user file wins for settings present in both. Swarmgit copies file settings
-into the daemon's environment, so seeing `SWARM_RELAYS` there does not mean it
-came from your shell. If it came from YAML, there is no shell variable to
-unset.
-
-## 6. How cloners use the relay
-
-A cloner only needs outbound TCP access to a relay in the seeder's link. It
-does **not** need to register with that relay or configure its own relay just
-to clone. Configure a relay on the cloner only if that machine also needs to
-be reachable by other peers.
-
-For example:
+Install the newer package; the service restarts. When asked about
+`/etc/default/swarm-relay`, keep your version, or run:
 
 ```bash
-git clone \
-  'swarm://<repo-id>?h=relay:relay.example.org:42425@<node-id>' \
-  project
+sudo dpkg --force-confold -i swarm-relay_*.deb
 ```
 
-When direct and relay addresses are both available, Swarmgit tries the direct
-path first and gives it about 1.5 seconds to succeed. It tries the relay
-immediately if direct dialing fails. `SWARM_RELAY_DELAY_MS` changes that
-delay.
+A kept file keeps its old arguments, so it does not pick up new defaults.
+Afterwards check `systemctl is-active swarm-relay` and the log.
 
-Relays do not forward connections to one another, so every transfer crosses
-at most one. A cloner that has only the node ID can find the relay that node
-chose, and a cloner that has only the repo ID can ask relays which nodes serve
-it (they see a hash of the repo ID, never the ID).
+### Move to another server
 
-A relayed connection can be replaced by a direct UDP path when both peers set
-`experimental_udp`. The relayed session is kept until the sync ends: if the
-UDP path fails, the download carries on over the relay. It does not work
-through every NAT, is IPv4 only and is never used behind a proxy.
+Install the package there, copy `/var/lib/swarm-relay/relay.key` and your
+arguments, give the key file to the `swarm-relay` user with mode 600, restart,
+and point the DNS name at the new server. Clients that use the name and `#<key>`
+need no change.
 
-`relay_max_bytes` (default 2 GiB) limits what one client session moves through
-a relay.
+### Stop or remove
 
-## 7. Capacity and resource use
+```bash
+sudo systemctl stop swarm-relay          # stop until the next start or boot
+sudo systemctl disable --now swarm-relay # keep it off
+sudo apt remove swarm-relay              # remove, keeping the settings
+sudo apt purge swarm-relay               # also remove settings and the account
+sudo rm -rf /var/lib/swarm-relay         # delete the key as well
+```
 
-Each registered peer maintains one long-lived TCP control connection per
-relay. That consumes a file descriptor, kernel socket state, and some process
-memory even when no clone is running. Ten thousand registered seeders do not
-mean ten thousand active transfers.
+## 8. Capacity
 
-Each active splice adds two TCP data connections and copies bytes in both
-directions. Network throughput and egress costs are usually the main cost
-during large clones; CPU and memory use increase with concurrent splices. The
-relay does not cache or retain the Git objects.
+Each registered peer holds one long-lived TCP connection: a file descriptor and
+a little memory. Ten thousand registered peers do not mean ten thousand
+transfers. Each relayed session adds two data connections and copies bytes both
+ways, so large clones cost mostly bandwidth.
 
-Default limits in the current server:
-
-| Resource | Default |
-| --- | ---: |
-| Registered listeners | 10,000 |
-| Simultaneous relayed sessions | 500 |
-| Pending connection requests | 1,000 |
-| Pending request lifetime | 10 seconds |
+| Resource | Default limit |
+| --- | --- |
+| Registered peers | 10,000 |
+| Relayed sessions at once | 500 |
 | Rate of one session | 8 MiB/s |
 | Bytes per target node per day | 10 GiB |
-| Idle splice timeout | 120 seconds |
-| Listener control silence timeout | 75 seconds |
+| Idle session timeout | 120 seconds |
 
-The options above adjust these limits. Raising limits does not add bandwidth, memory, or file descriptors.
-Monitor CPU, memory, file descriptors, network throughput, and egress under
-realistic load before increasing them. Daily quotas are kept in memory and
-start again when the relay restarts.
+To cap what a small server spends, lower `--max-splices`,
+`--splice-kib-per-sec` and `--node-daily-mib`. Raising limits does not add
+bandwidth or file descriptors, so watch CPU, memory, descriptors and traffic
+first. Daily quotas are kept in memory and start again when the relay restarts.
 
-## 8. Privacy and security
+## 9. Privacy and security
 
-- The relay sees the connecting peers' IP addresses and node IDs, plus
-  connection timing and byte volume.
-- The normal peer handshake and repository traffic are end-to-end encrypted.
-  The relay cannot read repository IDs, file contents, or signed manifests.
-- The node ID in the relay hint pins the expected peer. A malicious relay can
-  block or drop a connection, but cannot impersonate the pinned peer without
-  failing authentication.
-- The control channel is encrypted to the relay's key (Noise NK) when the
-  client knows it. A client that learned the key from the relay itself is
-  protected only against passive observers; put `#<key>` in the address to
-  rule out an impostor.
-- The relay keeps live registrations and pending tokens in memory. It does
-  not store repository data. The only thing it writes is its key file. Diagnostic logs can include remote IP addresses,
-  so treat and retain logs accordingly.
-- A relay is not a general-purpose proxy: it only pairs a dial request for a
-  registered node with the target's one-time accept connection. A public relay
-  can still deny service to its users.
+- The relay sees both peers' IP addresses and node IDs, connection times and
+  byte counts.
+- It cannot read repository IDs, file contents or signed states: the peer
+  session is encrypted end to end.
+- The node ID in a relay hint pins the expected peer. A hostile relay can block
+  or drop a connection, but cannot impersonate the peer.
+- The control connection is encrypted to the relay's key when the client knows
+  it. A client that learned the key from the relay itself is protected only
+  against passive observers; use `#<key>` to rule out an impostor.
+- The relay writes only its key file. Logs can contain IP addresses; handle and
+  expire them accordingly.
+- It is not a general proxy. It only pairs a request for a registered node with
+  that node's one-time answer.
+- Keep the server updated, and expose no ports beyond SSH and the relay port.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
-| Symptom | Checks |
-| --- | --- |
-| Seeder never reports `registered` | Check outbound TCP from the seeder, DNS resolution, exact `--name` match, and `journalctl -u swarm-relay`. |
-| A relay you did not list is never found | The relay must be announcing (no `--no-network`, password or `--allow-node`; `--public` if it is alone). The client must serve a repository, have `relay_discovery` on and use no proxy. In `auto` mode a directly reachable node registers nowhere. |
-| Clone reports `no_such_node` | The seeder is offline, not registered at the relay in the link, or the link is stale. Restart the seeder daemon and share a fresh `swarm link`. |
-| Clone times out | Check inbound TCP 42425 in host/cloud firewalls and confirm the cloner can resolve and reach the relay name in the hint. |
-| Relay reports `busy` or `limit_exceeded` | Check listener/splice ceilings, file descriptors, memory, CPU, and bandwidth before raising limits. |
-| Seeder reports `limit_exceeded: too many listeners` | More than 2 machines or daemons behind one public address are registering. Raise `--listeners-per-ip`. |
-| Relay hint is ignored | Check that the cloner is not using `relay_mode: off` and that the hint includes `@<node-id>`. |
-
-To stop the packaged relay:
+Check these in order: the service is active, the port is listening, the port is
+reachable from outside, the name matches, then the client.
 
 ```bash
-sudo systemctl stop swarm-relay
+systemctl is-active swarm-relay            # on the server
+sudo ss -ltnp | grep 42425                 # on the server
+nc -vz relay.example.org 42425             # from another network
+swarm status relays                        # on the seeder
 ```
 
-After changing a relay address, restart the relay and seeder daemon, confirm
-registration with `swarm status`, and share a newly generated link.
+| Symptom | Cause and fix |
+| --- | --- |
+| Service does not start | Read `journalctl -u swarm-relay`. A bad option, a port in use, or a key or password file the `swarm-relay` user cannot read. |
+| `Connection refused` | Nothing is listening at that address. Check the service, the port and the DNS record. |
+| Timeout connecting | A firewall or security group blocks TCP 42425, or the DNS name is behind an HTTP proxy. |
+| `auth_failed: proof rejected` | The client's address differs from `--name`. Make them match. |
+| `auth_failed: this relay needs its password` | Set `relay_password`, and write the address with `#<key>`. |
+| `limit_exceeded: too many listeners` | More than 2 daemons behind one public address are registering. Raise `--listeners-per-ip`. |
+| `busy` or `limit_exceeded` on clone | A session or rate limit was reached. Check load before raising it. |
+| `none in use` on the seeder | No relay configured or found, or the machine is reachable directly. Set `relay_mode: always` to test. |
+| Link has no `h=relay:` hint | The seeder is not registered yet. Wait for `registered`, then run `swarm link` again. |
+| `no_such_node` when cloning | The seeder is offline or no longer registered there. Restart its daemon and share a new link. |
+| Relay hint ignored | The cloner has `relay_mode: off`, or the hint lacks `@<node-id>`. |
+| A public relay is never found | It must run without `--no-network`, a password or `--allow-node`, and needs `--public` if alone. |
+
+### Testing discovery
+
+The daemon remembers relays it has seen. To test discovery from nothing, use a
+fresh `SWARM_HOME`, remove `relays` from every settings file (both
+`/etc/swarmgit/config.yaml` and `~/.config/swarmgit/config.yaml` are read),
+make sure `relay_discovery` is on, set `relay_mode: always`, and seed a
+repository there. Settings from files are passed to the daemon as environment
+variables, so seeing `SWARM_RELAYS` in its environment does not mean it came
+from your shell.
