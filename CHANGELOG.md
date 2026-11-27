@@ -6,6 +6,17 @@ All notable changes to Swarmgit are recorded here.
 
 ### Added
 
+- `swarm inspect` lists branches and tags, the repo a fork came from, and the
+  forks of it held on this machine (`branches`, `tags`, `upstream` and
+  `downstream` in `--json`).
+- Merge requests with comments and reviews. `swarm mr create` (or `git push
+  <remote> HEAD:refs/for/<branch>`) proposes a branch without a repo key, also
+  from a fork; `swarm mr list|show|diff|checkout|comment|review|merge|close|
+  reopen` does the rest, naming a request by its branch. Everything is signed
+  and kept in the repo. Anyone with the link can write, and nothing can be
+  deleted. Peers need this version to carry them.
+- `swarm status` counts open merge requests (`open_merge_requests` in
+  `--json`).
 - `swarm status repos`, `swarm status relays` and `swarm status peers`.
   `swarm status <repo>` shows one repo in detail.
 - `swarm daemon start` and `swarm daemon restart`.

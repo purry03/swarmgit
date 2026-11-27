@@ -64,6 +64,9 @@ _swarm() {
             swarm,mirror)
                 cmd="swarm__subcmd__mirror"
                 ;;
+            swarm,mr)
+                cmd="swarm__subcmd__mr"
+                ;;
             swarm,purge)
                 cmd="swarm__subcmd__purge"
                 ;;
@@ -151,6 +154,9 @@ _swarm() {
             swarm__subcmd__help,mirror)
                 cmd="swarm__subcmd__help__subcmd__mirror"
                 ;;
+            swarm__subcmd__help,mr)
+                cmd="swarm__subcmd__help__subcmd__mr"
+                ;;
             swarm__subcmd__help,purge)
                 cmd="swarm__subcmd__help__subcmd__purge"
                 ;;
@@ -201,6 +207,36 @@ _swarm() {
                 ;;
             swarm__subcmd__help__subcmd__mirror,export)
                 cmd="swarm__subcmd__help__subcmd__mirror__subcmd__export"
+                ;;
+            swarm__subcmd__help__subcmd__mr,checkout)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__checkout"
+                ;;
+            swarm__subcmd__help__subcmd__mr,close)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__close"
+                ;;
+            swarm__subcmd__help__subcmd__mr,comment)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__comment"
+                ;;
+            swarm__subcmd__help__subcmd__mr,create)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__create"
+                ;;
+            swarm__subcmd__help__subcmd__mr,diff)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__diff"
+                ;;
+            swarm__subcmd__help__subcmd__mr,list)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__list"
+                ;;
+            swarm__subcmd__help__subcmd__mr,merge)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__merge"
+                ;;
+            swarm__subcmd__help__subcmd__mr,reopen)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__reopen"
+                ;;
+            swarm__subcmd__help__subcmd__mr,review)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__review"
+                ;;
+            swarm__subcmd__help__subcmd__mr,show)
+                cmd="swarm__subcmd__help__subcmd__mr__subcmd__show"
                 ;;
             swarm__subcmd__help__subcmd__status,peers)
                 cmd="swarm__subcmd__help__subcmd__status__subcmd__peers"
@@ -283,6 +319,72 @@ _swarm() {
             swarm__subcmd__mirror__subcmd__help,help)
                 cmd="swarm__subcmd__mirror__subcmd__help__subcmd__help"
                 ;;
+            swarm__subcmd__mr,checkout)
+                cmd="swarm__subcmd__mr__subcmd__checkout"
+                ;;
+            swarm__subcmd__mr,close)
+                cmd="swarm__subcmd__mr__subcmd__close"
+                ;;
+            swarm__subcmd__mr,comment)
+                cmd="swarm__subcmd__mr__subcmd__comment"
+                ;;
+            swarm__subcmd__mr,create)
+                cmd="swarm__subcmd__mr__subcmd__create"
+                ;;
+            swarm__subcmd__mr,diff)
+                cmd="swarm__subcmd__mr__subcmd__diff"
+                ;;
+            swarm__subcmd__mr,help)
+                cmd="swarm__subcmd__mr__subcmd__help"
+                ;;
+            swarm__subcmd__mr,list)
+                cmd="swarm__subcmd__mr__subcmd__list"
+                ;;
+            swarm__subcmd__mr,merge)
+                cmd="swarm__subcmd__mr__subcmd__merge"
+                ;;
+            swarm__subcmd__mr,reopen)
+                cmd="swarm__subcmd__mr__subcmd__reopen"
+                ;;
+            swarm__subcmd__mr,review)
+                cmd="swarm__subcmd__mr__subcmd__review"
+                ;;
+            swarm__subcmd__mr,show)
+                cmd="swarm__subcmd__mr__subcmd__show"
+                ;;
+            swarm__subcmd__mr__subcmd__help,checkout)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__checkout"
+                ;;
+            swarm__subcmd__mr__subcmd__help,close)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__close"
+                ;;
+            swarm__subcmd__mr__subcmd__help,comment)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__comment"
+                ;;
+            swarm__subcmd__mr__subcmd__help,create)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__create"
+                ;;
+            swarm__subcmd__mr__subcmd__help,diff)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__diff"
+                ;;
+            swarm__subcmd__mr__subcmd__help,help)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__help"
+                ;;
+            swarm__subcmd__mr__subcmd__help,list)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__list"
+                ;;
+            swarm__subcmd__mr__subcmd__help,merge)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__merge"
+                ;;
+            swarm__subcmd__mr__subcmd__help,reopen)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__reopen"
+                ;;
+            swarm__subcmd__mr__subcmd__help,review)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__review"
+                ;;
+            swarm__subcmd__mr__subcmd__help,show)
+                cmd="swarm__subcmd__mr__subcmd__help__subcmd__show"
+                ;;
             swarm__subcmd__status,help)
                 cmd="swarm__subcmd__status__subcmd__help"
                 ;;
@@ -314,7 +416,7 @@ _swarm() {
 
     case "${cmd}" in
         swarm)
-            opts="-h -V --help --version init link status inspect about discover-relays seed unseed gc purge fork export mirror import maintainers accept key completions relay daemon help"
+            opts="-h -V --help --version init link status inspect about discover-relays seed unseed gc purge mr fork export mirror import maintainers accept key completions relay daemon help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -568,7 +670,7 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__help)
-            opts="init link status inspect about discover-relays seed unseed gc purge fork export mirror import maintainers accept key completions relay daemon help"
+            opts="init link status inspect about discover-relays seed unseed gc purge mr fork export mirror import maintainers accept key completions relay daemon help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -960,6 +1062,160 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__help__subcmd__mirror__subcmd__export)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr)
+            opts="list show create comment review checkout diff merge close reopen"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__checkout)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__close)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__comment)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__create)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__diff)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__merge)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__reopen)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__review)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__help__subcmd__mr__subcmd__show)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1536,6 +1792,468 @@ _swarm() {
                 return 0
             fi
             case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr)
+            opts="-R -h --repo --offline --help list show create comment review checkout diff merge close reopen help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__checkout)
+            opts="-R -h --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__close)
+            opts="-m -R -h --message --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --message)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__comment)
+            opts="-m -R -h --message --file --line --reply-to --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --message)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --line)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --reply-to)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__create)
+            opts="-m -R -h --base --title --message --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --base)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --title)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --message)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__diff)
+            opts="-R -h --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help)
+            opts="list show create comment review checkout diff merge close reopen help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__checkout)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__close)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__comment)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__create)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__diff)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__merge)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__reopen)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__review)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__help__subcmd__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__list)
+            opts="-R -h --all --json --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__merge)
+            opts="-R -h --no-push --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__reopen)
+            opts="-R -h --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__review)
+            opts="-m -R -h --approve --request-changes --message --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --message)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        swarm__subcmd__mr__subcmd__show)
+            opts="-R -h --json --repo --offline --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --repo)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -R)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;

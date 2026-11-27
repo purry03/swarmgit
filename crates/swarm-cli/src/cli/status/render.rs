@@ -266,6 +266,9 @@ fn notes(style: Style, repo: &Value) -> Vec<String> {
     if more > 0 {
         lines.push(style.paint(DIM, &format!("↳ and {more} more")));
     }
+    if let Some(open) = number(repo, "open_merge_requests").filter(|open| *open > 0) {
+        lines.push(format!("{open} open merge request(s); see `swarm mr list`"));
+    }
     lines.extend(
         problems(repo)
             .into_iter()
@@ -305,6 +308,9 @@ pub(super) fn repo_detail(out: &mut String, style: Style, status: &Value) {
         field(out, "Seeders", &format!("{}{checked}", seeders(repo)));
         let (label, code) = state(repo);
         field(out, "State", &style.paint(code, &label));
+        if let Some(open) = number(repo, "open_merge_requests") {
+            field(out, "Open MRs", &open.to_string());
+        }
         for problem in problems(repo) {
             let _ = writeln!(out, "  ! {problem}");
         }

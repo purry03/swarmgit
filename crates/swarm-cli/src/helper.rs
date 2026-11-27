@@ -5,7 +5,7 @@
 //! the `git` binary. All human output goes to stderr.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use swarm_core::ids::RepoId;
@@ -14,6 +14,11 @@ use swarm_daemon::repo as daemon_repo;
 use swarm_store::git;
 use swarm_store::Home;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+use crate::propose::{describe, propose, Proposal};
+
+/// Pushing to `refs/for/<branch>` proposes a merge into that branch.
+const FOR_PREFIX: &str = "refs/for/";
 
 /// Cached answer from the daemon's `sync` command.
 #[derive(Clone)]
@@ -32,6 +37,8 @@ struct Helper {
     progress: bool,
     /// Store path from the `list` sync, reused by `fetch`.
     synced: Option<PathBuf>,
+    /// `git push -o` values, for merge requests.
+    push_options: Vec<String>,
 }
 
 fn repo_from_url(url: &str) -> Result<RepoId, String> {
@@ -153,6 +160,7 @@ impl Helper {
             verbosity: 1,
             progress: false,
             synced: None,
+            push_options: Vec::new(),
         }
     }
 
@@ -224,7 +232,9 @@ impl Helper {
         })
     }
 
-    async fn list(&mut self) -> Result<(), ClientError> {
+    /// List what can be fetched. `for_push` leaves out merge request refs,
+    /// which a push must neither move nor delete.
+    async fn list(&mut self, for_push: bool) -> Result<(), ClientError> {
         let listing = self.sync().await?;
         self.synced = Some(listing.store_path.clone());
         let mut text = String::new();
@@ -233,6 +243,19 @@ impl Helper {
         }
         for (name, oid) in &listing.refs {
             text.push_str(&format!("{oid} {name}\n"));
+        }
+        if !for_push {
+            let merge_requests = git::Git::bare(&listing.store_path)
+                .output(&[
+                    "for-each-ref",
+                    "--format=%(objectname) %(refname)",
+                    "refs/mr",
+                ])
+                .await
+                .unwrap_or_default();
+            for line in merge_requests.lines() {
+                text.push_str(&format!("{line}\n"));
+            }
         }
         if let Some(head) = &listing.head {
             text.push_str(&format!("@{head} HEAD\n"));
@@ -291,17 +314,40 @@ impl Helper {
             return Ok(());
         }
         let (has_key, store) = self.has_key_and_store().await?;
-        if !has_key {
-            for spec in specs {
-                let dst = destination(spec);
-                write_line(&format!("error {dst} no signing key (use: git swarm fork)")).await;
+        let options = std::mem::take(&mut self.push_options);
+        let mut plain = Vec::new();
+        for spec in specs {
+            let dst = destination(spec);
+            if let Some(target) = dst.strip_prefix(FOR_PREFIX) {
+                match self.propose(&store, spec, target, &options).await {
+                    Ok(()) => write_line(&format!("ok {dst}")).await,
+                    Err(err) => {
+                        let first = err.lines().next().unwrap_or("not proposed");
+                        write_line(&format!("error {dst} {first}")).await;
+                    }
+                }
+            } else if dst.starts_with("refs/mr/") {
+                write_line(&format!(
+                    "error {dst} merge request refs are written by `swarm mr`"
+                ))
+                .await;
+            } else if !has_key {
+                write_line(&format!(
+                    "error {dst} no signing key (use: git swarm fork), \
+                     or propose your branch with `swarm mr create`"
+                ))
+                .await;
+            } else {
+                plain.push(spec);
             }
+        }
+        if plain.is_empty() {
             write_line("").await;
             return Ok(());
         }
 
         let mut results: Vec<(String, Result<(), String>)> = Vec::new();
-        for spec in specs {
+        for spec in plain {
             let (force, body) = match spec.strip_prefix('+') {
                 Some(body) => (true, body),
                 None => (false, spec.as_str()),
@@ -350,6 +396,78 @@ impl Helper {
         write_line("").await;
         Ok(())
     }
+}
+
+impl Helper {
+    /// `git push <remote> <src>:refs/for/<target>`: open a merge request, or
+    /// update the one already open for this branch.
+    async fn propose(
+        &mut self,
+        store: &Path,
+        spec: &str,
+        target: &str,
+        options: &[String],
+    ) -> Result<(), String> {
+        let body = spec.strip_prefix('+').unwrap_or(spec);
+        let src = body.split_once(':').map_or(body, |(src, _)| src);
+        if src.is_empty() {
+            return Err("close merge requests with `swarm mr close`".into());
+        }
+        let option = |wanted: &[&str]| {
+            options.iter().rev().find_map(|option| {
+                let (key, value) = option.split_once('=')?;
+                wanted.contains(&key).then_some(value)
+            })
+        };
+        let proposal = Proposal {
+            repo: self.repo,
+            store,
+            src,
+            target: Some(target).filter(|target| !target.is_empty()),
+            title: option(&["title"]),
+            body: option(&["body", "description"]),
+            mr: option(&["mr"]),
+        };
+        let reply = propose(&mut self.client, proposal)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.note(1, describe(&reply));
+        Ok(())
+    }
+}
+
+/// Undo the C-style quoting git applies to an option holding unusual bytes.
+fn unquote(value: &str) -> String {
+    let Some(inner) = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    else {
+        return value.to_string();
+    };
+    let mut out = Vec::new();
+    let mut bytes = inner.bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            out.push(byte);
+            continue;
+        }
+        match bytes.next() {
+            Some(b'n') => out.push(b'\n'),
+            Some(b't') => out.push(b'\t'),
+            Some(first @ b'0'..=b'7') => {
+                let mut code = u32::from(first - b'0');
+                for _ in 0..2 {
+                    if let Some(digit) = bytes.next_if(|b| (b'0'..=b'7').contains(b)) {
+                        code = code * 8 + u32::from(digit - b'0');
+                    }
+                }
+                out.push(code as u8);
+            }
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn destination(spec: &str) -> String {
@@ -435,6 +553,9 @@ pub async fn run(args: Vec<String>) -> i32 {
             if name == "progress" {
                 helper.progress = value == "true";
             }
+            if name == "push-option" {
+                helper.push_options.push(unquote(value));
+            }
             write_line("ok").await;
             continue;
         }
@@ -447,7 +568,7 @@ pub async fn run(args: Vec<String>) -> i32 {
             continue;
         }
         if line == "list" || line.starts_with("list ") {
-            if let Err(err) = helper.list().await {
+            if let Err(err) = helper.list(line == "list for-push").await {
                 eprintln!("swarm: {err}");
                 fail(1);
             }
@@ -466,4 +587,18 @@ pub async fn run(args: Vec<String>) -> i32 {
         eprintln!("swarm: helper ignoring unknown command {line:?}");
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_options_are_unquoted() {
+        assert_eq!(unquote("title=Fix it"), "title=Fix it");
+        assert_eq!(
+            unquote(r#""title=say \"hi\" \303\251""#),
+            "title=say \"hi\" é"
+        );
+    }
 }

@@ -260,11 +260,16 @@ fn build_hello(
         .collect();
     Message::Hello {
         version: swarm_core::consts::PROTOCOL_VERSION,
-        caps: ["want", "announce", crate::message::ABOUT_CAP]
-            .into_iter()
-            .map(String::from)
-            .chain(extra_caps.iter().cloned())
-            .collect(),
+        caps: [
+            "want",
+            "announce",
+            crate::message::ABOUT_CAP,
+            crate::message::MR_CAP,
+        ]
+        .into_iter()
+        .map(String::from)
+        .chain(extra_caps.iter().cloned())
+        .collect(),
         observed: peer.encode(None),
         interests,
     }

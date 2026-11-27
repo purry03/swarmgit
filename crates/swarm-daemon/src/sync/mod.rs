@@ -2,6 +2,7 @@
 
 mod dial;
 mod fetch;
+pub(crate) mod mrs;
 pub mod progress;
 mod relayed;
 
@@ -44,6 +45,8 @@ pub struct SyncResult {
     pub rejected: usize,
     /// Name and description, set by an inspect.
     pub about: Option<VerifiedAbout>,
+    /// The repo this one was forked from, as its root states it.
+    pub forked_from: Option<RepoId>,
 }
 
 impl SyncResult {
@@ -329,6 +332,7 @@ async fn sync_repo_inner(
             accepted,
             rejected,
             about: fetch::fetch_about(repo, &net_state, &dialer.connected).await,
+            forked_from: forked_from(&net_state, repo),
         });
     }
 
@@ -419,6 +423,7 @@ async fn sync_repo_inner(
             .map_err(|_| NetError::Malformed("database lock poisoned".into()))?;
         let _ = db.set_last_sync(repo, crate::net::now());
     }
+    mrs::exchange(net, repo, &dialer.connected).await;
     if row.is_none() {
         // A first clone seeds (SEED-1): announce it on the DHT right away.
         net.announce_dht(repo);
@@ -639,7 +644,17 @@ fn result(
         accepted: counts.accepted,
         rejected: counts.rejected,
         about: None,
+        forked_from: forked_from(net_state, store.repo_id()),
     }
+}
+
+/// The source a fork's root manifest names.
+fn forked_from(state: &AcceptState, repo: RepoId) -> Option<RepoId> {
+    state
+        .root_manifest()
+        .and_then(|root| root.manifest.forked_from)
+        .map(RepoId::from_bytes)
+        .filter(|source| *source != repo)
 }
 
 struct NoObjects;

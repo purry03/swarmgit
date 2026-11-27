@@ -82,4 +82,22 @@ fi
 a swarm about "$REPO" --name "" >/dev/null
 expect "$(c swarm inspect --json "$LINK")" '"name":null'
 
+echo "== inspect lists branches and tags, and the forks on either side"
+a git tag v1
+a git push -q swarm v1 main:refs/heads/side
+a swarm about "$REPO" --name demo >/dev/null
+SEEN=$(c swarm inspect --json "$LINK")
+expect "$SEEN" '"branches":["main","side"]'
+expect "$SEEN" '"tags":["v1"]'
+expect "$SEEN" '"upstream":null'
+expect "$SEEN" '"downstream":[]'
+TEXT=$(c swarm inspect "$LINK")
+expect "$TEXT" 'name: demo'
+expect "$TEXT" 'main (default)'
+FORK=$(c swarm fork "$LINK")
+SEEN=$(c swarm inspect --json "$FORK")
+expect "$SEEN" "\"upstream\":{\"link\":\"swarm://$REPO\""
+expect "$(c swarm inspect "$FORK")" "forked from: swarm://$REPO"
+expect "$(c swarm inspect "$LINK")" "fork: swarm://${FORK:8:52}"
+
 echo "ABOUT PASS"

@@ -68,7 +68,9 @@ pub(crate) async fn write_bundle(store: &RepoStore, path: &Path) -> Result<Writt
     let has_refs = !git.refs().await?.is_empty();
     if has_refs {
         let tmp = git_tmp.to_string_lossy().into_owned();
-        git.output(&["bundle", "create", &tmp, "--all"]).await?;
+        // Merge requests stay out: they are only exchanged between peers.
+        git.output(&["bundle", "create", &tmp, "--exclude=refs/mr/*", "--all"])
+            .await?;
     }
     let result = assemble(&accepted, has_refs.then_some(git_tmp.as_path()), path);
     let _ = fs::remove_file(&git_tmp);

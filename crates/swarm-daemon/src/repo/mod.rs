@@ -3,8 +3,10 @@
 mod about;
 mod admin;
 mod bundle;
+mod lineage;
 mod maintainers;
 mod mirror;
+pub(crate) mod mr;
 mod publish;
 mod recovery;
 
@@ -17,6 +19,7 @@ pub use admin::{
 pub use bundle::{export, import};
 pub use maintainers::{accept_ref, key_id_of, key_new, maintainers};
 pub use mirror::mirror_export;
+pub use mr::{mr_event, mr_list, mr_open, mr_show};
 pub use publish::publish;
 pub use recovery::{recovery_set, rotate};
 
@@ -273,6 +276,20 @@ pub async fn inspect(
         .iter()
         .map(|node_id| json!({ "nodeId": node_id, "state": "seeding" }))
         .collect();
+    let short_names = |prefix: &str| -> Vec<&str> {
+        outcome
+            .ref_list
+            .keys()
+            .filter_map(|name| name.strip_prefix(prefix))
+            .collect()
+    };
+    // With no peer reached, the stored name record is the one there is.
+    let about = outcome.about.clone().or_else(|| {
+        (outcome.state == "stale")
+            .then(|| local_about(state, repo))
+            .flatten()
+    });
+    let (upstream, downstream) = lineage::of(state, repo, outcome.forked_from)?;
     Ok(json!({
         "repoId": repo.to_base32(),
         "link": format!("swarm://{}", repo.to_base32()),
@@ -281,11 +298,22 @@ pub async fn inspect(
         "objectFormat": outcome.object_format,
         "refs": refs,
         "peers": peers,
-        "name": about_text(&outcome.about, |about| &about.name),
-        "description": about_text(&outcome.about, |about| &about.description),
+        "branches": short_names("refs/heads/"),
+        "tags": short_names("refs/tags/"),
+        "name": about_text(&about, |about| &about.name),
+        "description": about_text(&about, |about| &about.description),
+        "upstream": upstream,
+        "downstream": downstream,
         "metadataOnly": true,
         "state": outcome.state,
     }))
+}
+
+/// The name record in this machine's copy of `repo`, if it has one.
+fn local_about(state: &DaemonState, repo: RepoId) -> Option<swarm_core::VerifiedAbout> {
+    let store = RepoStore::new(state.home.clone(), repo);
+    let accepted = store.exists().then(|| store.load_state().ok()).flatten()?;
+    store.load_about(&accepted, u64::try_from(now()).unwrap_or(0))
 }
 
 /// One field of the name record, or none when unset.

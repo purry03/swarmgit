@@ -8,6 +8,9 @@ pub const CTX_SIG_MANIFEST: &[u8] = b"swarmgit/v1/manifest\0";
 /// Domain separator prefixed to a repo's name and description before signing.
 pub const CTX_SIG_ABOUT: &[u8] = b"swarmgit/v1/about\0";
 
+/// Domain separator prefixed to a merge request event before signing.
+pub const CTX_SIG_MR: &[u8] = b"swarmgit/v1/mr\0";
+
 /// BLAKE3 derive-key context for DHT topics, and for the key of the relay
 /// rendezvous topics (relay design spec milestone R6).
 pub const CTX_TOPIC: &str = "swarmgit/v1/topic";
@@ -103,6 +106,24 @@ pub const MAX_ABOUT_BYTES: usize = 8 * 1024;
 /// How far past the local clock a record's revision may lie. It stops one
 /// record from outranking every later edit.
 pub const MAX_ABOUT_SKEW_SECS: u64 = 24 * 60 * 60;
+
+/// Maximum size of one merge request event, signature included.
+pub const MAX_MR_EVENT_BYTES: usize = 64 * 1024;
+
+/// Maximum display name length on a merge request event.
+pub const MAX_MR_NAME_BYTES: usize = 64;
+
+/// Maximum `refs/mr` refs (one per merge request and author) kept for a repo.
+pub const MAX_MR_REFS: usize = 2000;
+
+/// Maximum `refs/mr` refs one author may hold in a repo.
+pub const MAX_MR_REFS_PER_AUTHOR: usize = 200;
+
+/// Maximum events one author may write on one merge request.
+pub const MAX_MR_CHAIN: usize = 1000;
+
+/// Maximum size of the pack that brings another peer's merge requests.
+pub const MAX_MR_PACK_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum maintainers in one root manifest.
 pub const MAX_MAINTAINERS: usize = 64;

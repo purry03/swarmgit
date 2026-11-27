@@ -98,8 +98,8 @@ swarm about <repo> --name "hello" --description "a first repository"
 ```
 
 `swarm status` shows what the daemon is serving. To look at a repository before
-cloning it, `swarm inspect '<link>'` checks its signed metadata without
-downloading any objects.
+cloning it, `swarm inspect '<link>'` shows its name, description, branches,
+tags and fork links from signed metadata, without downloading any objects.
 
 ## Clone a repository
 
@@ -114,6 +114,30 @@ After that, `git fetch`, `git pull` and `git push swarm main` work as usual.
 > Pushing from a clone needs the repository signing key. To share write access,
 > copy the key or authorize a maintainer key. The
 > [client guide](docs/USER-GUIDE.md) covers both.
+
+## Merge requests
+
+Anyone with the link can propose a branch. No repo key is needed:
+
+```bash
+git checkout -b fix
+git commit -am "Fix the thing"
+swarm mr create                  # run it again after more commits
+```
+
+The owner and anyone else discuss, review and merge it, naming it by its branch:
+
+```bash
+swarm mr list
+swarm mr diff fix
+swarm mr comment fix --file src/lib.rs --line 12 -m "Why?"
+swarm mr review fix --approve
+swarm mr merge fix
+```
+
+From a fork, `swarm mr create -R '<link of the original>'` proposes the branch
+there. The conversation is signed, stored with the repo, and cannot be edited
+afterwards. See [merge requests](docs/USER-GUIDE.md#9b-merge-requests).
 
 ## Try the two-peer demo
 
@@ -198,7 +222,7 @@ scripts/ci.sh
 Swarmgit is pre-1.0. The tree includes milestones M0 through M9 and relay
 support: core types, the daemon with its CLI and remote helper, encrypted
 transport, LAN and DHT discovery, peer exchange, multi-peer fetch, bundles,
-maintainers, static mirrors, key recovery and rotation, relays, SOCKS5 and Tor,
+maintainers, merge requests, static mirrors, key recovery and rotation, relays, SOCKS5 and Tor,
 traffic shaping, inbound limits and experimental UDP hole punching. The
 protocol and CLI may still change before 1.0.
 

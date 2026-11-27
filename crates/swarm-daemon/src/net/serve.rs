@@ -10,6 +10,7 @@ use swarm_core::accept::AcceptState;
 use swarm_core::ids::{KeyId, Oid, RepoId};
 use swarm_core::manifest::verify_envelope;
 use swarm_net::handshake;
+use swarm_net::message::MrTip;
 use swarm_net::{BoxConn, Message, PeerAddr, Session, SessionHandle};
 use swarm_store::StoreError;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -17,6 +18,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
 use super::NetState;
+use crate::sync::mrs;
 use crate::sync::progress::Progress;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -227,6 +229,12 @@ async fn serve_message(
                 serve_announce_about(&net, repo, record).await;
             }
         }
+        Message::GetMrs { rid, repo_ix } => serve_mrs(&net, &handle, rid, repo_ix).await,
+        Message::AnnounceMrs { repo_ix, tips } => {
+            if let Some(repo) = repo_for(&handle, repo_ix) {
+                serve_announce_mrs(&net, repo, &handle, tips).await;
+            }
+        }
         Message::GetPeers { rid, repo_ix } => serve_peers(&net, &handle, rid, repo_ix),
         Message::PunchOffer {
             rid,
@@ -379,6 +387,45 @@ async fn serve_announce_about(net: &Arc<NetState>, repo: RepoId, record: Vec<u8>
     }
 }
 
+async fn serve_mrs(net: &NetState, handle: &SessionHandle, rid: u64, repo_ix: u16) {
+    let Some(repo) = repo_for(handle, repo_ix) else {
+        error(handle, rid, "unknown_repo", "unknown repo index");
+        return;
+    };
+    match net.store(repo).mr_tips().await {
+        Ok(tips) => reply(
+            handle,
+            Message::Mrs {
+                rid,
+                tips: mrs::wire_tips(&tips),
+            },
+        ),
+        Err(err) => store_error(handle, rid, err),
+    }
+}
+
+/// Take the announced merge request events from the sender and pass on the
+/// ones that were new here, so copies stop at the peers that have them.
+async fn serve_announce_mrs(
+    net: &Arc<NetState>,
+    repo: RepoId,
+    handle: &SessionHandle,
+    tips: Vec<MrTip>,
+) {
+    if !net.store(repo).exists() {
+        return;
+    }
+    let accepted = {
+        let lock = net.sync_lock(repo);
+        let _guard = lock.lock().await;
+        mrs::ingest(net, repo, handle, &tips).await
+    };
+    match accepted {
+        Ok(accepted) => mrs::announce(net, repo, &accepted).await,
+        Err(err) => tracing::debug!(error = %err, "announced merge request not taken"),
+    }
+}
+
 struct BusyGuard(Arc<AtomicBool>);
 
 impl Drop for BusyGuard {
@@ -410,7 +457,10 @@ async fn serve_want(
         error(handle, rid, "malformed", "cannot read manifests");
         return;
     };
-    let tips = tips_of(&state);
+    let mut tips = tips_of(&state);
+    if let Ok(mr) = store.mr_tips().await {
+        tips.extend(mr.into_values());
+    }
     if wants.iter().any(|want| !tips.iter().any(|tip| tip == want)) {
         error(handle, rid, "unauthorized", "Want is not a verified tip");
         return;

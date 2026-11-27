@@ -12,6 +12,23 @@ use crate::NetError;
 /// `Hello` capability of a node that understands messages 19 to 21.
 pub const ABOUT_CAP: &str = "about";
 
+/// `Hello` capability of a node that understands messages 22 to 24.
+pub const MR_CAP: &str = "mr";
+
+/// Most merge request refs one message may list.
+pub const MAX_MR_TIPS: usize = swarm_core::consts::MAX_MR_REFS;
+
+/// One author's chain on one merge request: the ref `refs/mr/<mr>/<author>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MrTip {
+    /// Object ID of the opening event.
+    pub mr: Oid,
+    /// Key ID of the author.
+    pub author: [u8; 32],
+    /// Object ID of the author's latest event.
+    pub tip: Oid,
+}
+
 /// A request ID chosen by the requester.
 pub type Rid = u64;
 
@@ -167,6 +184,29 @@ pub enum Message {
         /// The signed record.
         record: Vec<u8>,
     },
+    /// Type 22: ask for the repo's merge requests. Types 22 to 24 are sent
+    /// only to peers with the `mr` capability.
+    GetMrs {
+        /// Request ID.
+        rid: Rid,
+        /// Shared repo index.
+        repo_ix: u16,
+    },
+    /// Type 23: the reply to `GetMrs`.
+    Mrs {
+        /// Request ID.
+        rid: Rid,
+        /// Every `refs/mr` ref held.
+        tips: Vec<MrTip>,
+    },
+    /// Type 24: merge request events the receiver may not have. The receiver
+    /// asks for their objects with `Want` on the same session.
+    AnnounceMrs {
+        /// Shared repo index.
+        repo_ix: u16,
+        /// The refs that may be new to the receiver.
+        tips: Vec<MrTip>,
+    },
     /// Type 14, phase B only.
     PqInit {
         /// ML-KEM-768 encapsulation key, 1184 bytes.
@@ -221,6 +261,9 @@ impl Message {
             Self::GetAbout { .. } => 19,
             Self::About { .. } => 20,
             Self::AnnounceAbout { .. } => 21,
+            Self::GetMrs { .. } => 22,
+            Self::Mrs { .. } => 23,
+            Self::AnnounceMrs { .. } => 24,
         }
     }
 
@@ -241,7 +284,9 @@ impl Message {
             | Self::PunchOffer { rid, .. }
             | Self::PunchAnswer { rid, .. }
             | Self::GetAbout { rid, .. }
-            | Self::About { rid, .. } => Some(*rid),
+            | Self::About { rid, .. }
+            | Self::GetMrs { rid, .. }
+            | Self::Mrs { rid, .. } => Some(*rid),
             _ => None,
         }
     }
@@ -260,6 +305,7 @@ impl Message {
                 | Self::PackData { .. }
                 | Self::PunchAnswer { .. }
                 | Self::About { .. }
+                | Self::Mrs { .. }
         )
     }
 
@@ -279,7 +325,9 @@ impl Message {
             | Self::PunchOffer { rid, .. }
             | Self::PunchAnswer { rid, .. }
             | Self::GetAbout { rid, .. }
-            | Self::About { rid, .. } => *rid = value,
+            | Self::About { rid, .. }
+            | Self::GetMrs { rid, .. }
+            | Self::Mrs { rid, .. } => *rid = value,
             _ => {}
         }
     }
@@ -421,6 +469,13 @@ impl Message {
                 uint(u64::from(*repo_ix)),
                 Value::Bytes(record.clone()),
             ]),
+            Self::GetMrs { rid, repo_ix } => {
+                array(vec![uint(22), uint(*rid), uint(u64::from(*repo_ix))])
+            }
+            Self::Mrs { rid, tips } => array(vec![uint(23), uint(*rid), mr_tips(tips)]),
+            Self::AnnounceMrs { repo_ix, tips } => {
+                array(vec![uint(24), uint(u64::from(*repo_ix)), mr_tips(tips)])
+            }
             Self::PqInit { ek, r_i, pad } => array(vec![
                 uint(14),
                 Value::Bytes(ek.clone()),
@@ -441,6 +496,20 @@ impl Message {
         };
         cbor::encode(&value).map_err(NetError::from)
     }
+}
+
+fn mr_tips(tips: &[MrTip]) -> Value {
+    Value::Array(
+        tips.iter()
+            .map(|tip| {
+                array(vec![
+                    Value::Bytes(tip.mr.as_slice().to_vec()),
+                    Value::Bytes(tip.author.to_vec()),
+                    Value::Bytes(tip.tip.as_slice().to_vec()),
+                ])
+            })
+            .collect(),
+    )
 }
 
 fn uint(value: u64) -> Value {

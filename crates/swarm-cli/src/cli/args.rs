@@ -52,7 +52,7 @@ pub(super) enum Cmd {
         #[command(subcommand)]
         view: Option<StatusCmd>,
     },
-    /// Inspect signed repository metadata without downloading Git objects.
+    /// Show a repo's name, branches and forks without downloading Git objects.
     Inspect {
         /// A `swarm://` link, optionally with hints.
         link: String,
@@ -120,6 +120,17 @@ pub(super) enum Cmd {
         /// Print one JSON object on stdout.
         #[arg(long)]
         json: bool,
+    },
+    /// Merge requests: propose changes, discuss, review and merge them.
+    Mr {
+        /// A repo ID or link; by default the swarm remote of this clone.
+        #[arg(short = 'R', long = "repo", global = true, value_name = "REPO")]
+        repo: Option<String>,
+        /// Use what is already here instead of syncing first.
+        #[arg(long, global = true)]
+        offline: bool,
+        #[command(subcommand)]
+        command: MrCmd,
     },
     /// Create an independent repo from another one.
     Fork {
@@ -192,6 +203,102 @@ pub(super) enum Cmd {
         experimental_udp: bool,
         #[command(subcommand)]
         action: Option<DaemonCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum MrCmd {
+    /// List open merge requests.
+    List {
+        /// Include merged and closed ones.
+        #[arg(long)]
+        all: bool,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one merge request, its commits and conversation.
+    Show {
+        /// Its branch or ID (default: the current branch).
+        mr: Option<String>,
+        /// Print one JSON object on stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Propose a branch; run it again to add your new commits.
+    Create {
+        /// Branch to propose (default: the current one).
+        branch: Option<String>,
+        /// Branch to merge into (default: the repo's default branch).
+        #[arg(long, value_name = "BRANCH")]
+        base: Option<String>,
+        /// Title (default: taken from the commits).
+        #[arg(long)]
+        title: Option<String>,
+        /// Description.
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// Comment on a merge request, a file in it, or another comment.
+    Comment {
+        /// Its branch or ID (default: the current branch).
+        mr: Option<String>,
+        /// The comment; without it your git editor opens.
+        #[arg(short, long)]
+        message: Option<String>,
+        /// File the comment is about.
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// Line of that file.
+        #[arg(long, requires = "file")]
+        line: Option<u32>,
+        /// Comment being answered, by the ID shown before it.
+        #[arg(long, value_name = "COMMENT")]
+        reply_to: Option<String>,
+    },
+    /// Approve a merge request or ask for changes.
+    #[command(group = clap::ArgGroup::new("verdict").required(true))]
+    Review {
+        /// Its branch or ID (default: the current branch).
+        mr: Option<String>,
+        #[arg(long, group = "verdict")]
+        approve: bool,
+        #[arg(long, group = "verdict")]
+        request_changes: bool,
+        /// What you think.
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// Check out the proposed commits as branch mr/ID.
+    Checkout {
+        /// Its branch or ID.
+        mr: String,
+    },
+    /// Show the proposed changes.
+    Diff {
+        /// Its branch or ID (default: the current branch).
+        mr: Option<String>,
+    },
+    /// Merge into the target branch and publish (root or maintainer key).
+    Merge {
+        /// Its branch or ID.
+        mr: String,
+        /// Make the merge commit but do not push it.
+        #[arg(long)]
+        no_push: bool,
+    },
+    /// Close without merging (its author or a maintainer).
+    Close {
+        /// Its branch or ID.
+        mr: String,
+        /// Why.
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// Reopen a closed merge request.
+    Reopen {
+        /// Its branch or ID.
+        mr: String,
     },
 }
 

@@ -4,6 +4,7 @@
 
 mod cli;
 mod helper;
+mod propose;
 
 use std::path::Path;
 

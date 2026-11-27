@@ -18,6 +18,7 @@ pub mod glob;
 pub mod ids;
 pub mod keyfile;
 pub mod manifest;
+pub mod mr;
 pub mod pq;
 pub mod refname;
 pub mod resolve;

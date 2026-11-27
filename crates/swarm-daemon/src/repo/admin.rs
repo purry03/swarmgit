@@ -154,7 +154,9 @@ pub async fn status(state: &DaemonState, args: &Value) -> Result<Value, IpcError
     };
     let mut repos = Vec::with_capacity(rows.len());
     for row in &rows {
-        repos.push(summary(state, row)?);
+        let mut repo = summary(state, row)?;
+        repo["open_merge_requests"] = json!(super::mr::open_count(state, row.id).await);
+        repos.push(repo);
     }
     let lan = match state.net().map(|net| net.lan()) {
         Some(Some(lan)) => json!({ "enabled": true, "port": lan.port() }),

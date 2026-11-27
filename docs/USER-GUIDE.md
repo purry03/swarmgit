@@ -442,13 +442,125 @@ mirrors and forks do not carry them.
 
 `swarm inspect <link>` fetches a repo's signed metadata from a peer and checks
 it, without downloading any Git objects. It prints the name and description if
-set, then the sequence number and the number of refs and peers. `--json` adds
-the refs, `HEAD`, object format and peer node IDs; `--progress` also streams
-the lookup steps as JSON lines.
+set, the repos on either side of a fork, the branches (default marked) and
+tags, then the sequence number and the number of refs and peers:
+
+```text
+name: demo
+description: first words
+forked from: swarm://<original> (name)
+fork: swarm://<a fork on this machine>
+branches:
+  main (default)
+  side
+tags:
+  v1
+<repo ID> seq=3 refs=3 peers=1
+```
+
+`forked from` is what the fork's owner signed into it. `fork` lines list only
+forks held on this machine: the network does not record who forked a repo.
+`--json` adds `upstream`, `downstream`, `branches`, `tags`, the refs, `HEAD`,
+object format and peer node IDs; `--progress` also streams the lookup steps as
+JSON lines.
 
 `swarm discover-relays` lists the public relays it can find through the DHT and
 relay gossip, by domain name and address where a relay gives one. It does not
 need the daemon or a configured relay.
+
+## 9b. Merge requests
+
+A merge request asks for the commits on a branch to be merged, with a
+conversation around them. Anyone who has the repo's link can open one, comment
+and review. No repo key is needed, and only the owner or a maintainer can merge.
+
+### Propose a branch
+
+In a clone:
+
+```sh
+git checkout -b fix
+git commit -am "Fix the thing"
+swarm mr create                # into the repo's default branch
+```
+
+Commit more and run `swarm mr create` again to add the commits to the same
+request. The title and description come from your commits, or give them with
+`--title` and `-m`. `--base <branch>` picks another branch to merge into, and
+`swarm mr create <branch>` proposes a branch you do not have checked out.
+
+From a fork, name the original repo:
+
+```sh
+swarm mr create -R 'swarm://<original repo>?h=...'
+```
+
+Plain git works too: `git push origin HEAD:refs/for/main` does the same as
+`swarm mr create`, with `-o title=...` and `-o body=...` for the text. Use the
+name of your swarm remote (`origin` in a clone, `swarm` after `swarm init`). A
+push updates the open request for the same branch; `-o mr=<id>` names another
+one to update, and a push from a detached `HEAD` always opens a new one.
+
+### Discuss, review and merge
+
+Name a merge request by the branch it proposes. `show`, `diff`, `comment` and
+`review` use the current branch if you name none.
+
+```sh
+swarm mr list [--all]                      # open ones; --all adds merged and closed
+swarm mr show fix                          # description, commits and conversation
+swarm mr diff fix
+swarm mr checkout fix                      # try it, on a branch mr/<id>
+swarm mr comment fix -m "Why?"             # without -m your editor opens
+swarm mr comment fix --file a.c --line 12 -m "Off by one."
+swarm mr comment fix --reply-to <comment> -m "Fixed."
+swarm mr review fix --approve              # or --request-changes, with -m
+swarm mr close fix [-m TEXT]               # its author or a maintainer
+swarm mr reopen fix
+swarm mr merge fix                         # root or maintainer key
+```
+
+When two requests propose branches of the same name, yours and then the open one
+is meant; otherwise the command lists their IDs, shown by `swarm mr list`, and
+you give one of those instead. The ID in `[...]` before a comment is what
+`--reply-to` takes.
+
+Run these inside a clone, or name the repo with `-R <link or ID>`. Each command
+first syncs; `--offline` skips that. `swarm status` shows how many requests are
+open on each repo.
+
+`swarm mr merge` needs the target branch checked out, up to date and clean. It
+makes a merge commit and pushes it; `--no-push` stops before the push, and
+after a conflict you resolve, commit and push as usual. A request shows as
+`merged` once the target branch holds its latest commit, however it got there.
+A squash or rebase does not, so close such a request by hand.
+
+An approval counts for the commits it was given on. After the author adds more
+it is shown as outdated.
+
+### What is kept
+
+Every action is signed and added to the repo's history of the request. Nothing
+in it can be edited or removed: peers refuse a rewritten history. The proposed
+commits are kept with it. Peers pass it on when they are connected and at every
+sync. A command says how many peers have what you just wrote; with none
+reachable it stays on your machine and is sent later.
+
+### Identity and limits
+
+Your actions are signed with the repo's root or maintainer key if you hold one,
+and otherwise with a key made for this machine, `keys/identity.key` under the
+Swarmgit home. The name shown is your `git config user.name`; your e-mail
+address is not published. Names are free to choose, so go by the role and key
+shown next to them.
+
+- Anyone with the link can write, and there is no way to delete anything or to
+  block an author. Do not put secrets in a request or a comment.
+- One comment or description is at most 64 KiB, a repo holds at most 2000
+  request and participant pairs (200 per participant), and one transfer is at
+  most 64 MiB.
+- Bundles, mirrors and forks do not carry merge requests, and peers need this
+  version to pass them on.
 
 ## 9. CLI summary
 
@@ -456,6 +568,11 @@ need the daemon or a configured relay.
 swarm init [--object-format sha1|sha256] [--json]
 swarm link [--json] [repo]
 swarm about <repo> [--name TEXT] [--description TEXT] [--json]
+swarm mr create [branch] [--base B] [--title T] [-m TEXT]
+swarm mr list [--all] [--json] | show [branch] [--json] | diff [branch]
+swarm mr comment [branch] [-m TEXT] | review [branch] --approve|--request-changes
+swarm mr checkout <branch> | merge <branch> [--no-push] | close <branch> | reopen <branch>
+         all `swarm mr` commands: [-R <repo>] [--offline]
 swarm status [--json] [repo]
 swarm status repos [repo] | relays | peers [repo]  [--json]
 swarm inspect <link> [--json] [--progress]
@@ -539,8 +656,17 @@ up-to-date peer. A client never moves back to a lower `seq` it already has.
 **`busy` from `swarm gc`** — a sync or upload of that repo is running. Retry
 when it has finished.
 
-**`no signing key`** — copy the root key as shown in section 4. `swarm fork`
-also creates a repo you can push to.
+**`no signing key`** — to propose the change instead, run `swarm mr create`
+(section 9b). To publish yourself, copy the root key as
+shown in section 4. `swarm fork` also creates a repo you can push to.
+
+**A merge request or comment has not arrived** — the command that wrote it
+says how many peers have it. With `0`, it is sent at the next sync with a peer;
+any `swarm mr` command syncs first. Both sides need a version with merge
+requests.
+
+**`matches several merge requests`** — two propose branches of the same name.
+Give one of the IDs listed instead of the branch.
 
 **`git pull` says divergent branches** — add `--no-rebase`, or fetch and merge
 `--ff-only` as above.
@@ -551,6 +677,8 @@ relays, where `name:port (IP)` is a relay with a domain name.
 Under each repo, `↳` lines name the folders on this machine that use it (three
 at most; `swarm status <repo>` lists them all, and `--json` has them as
 `folders`).
+A line there also counts open merge requests (`open_merge_requests` in
+`--json`; see section 9b).
 `swarm status peers` lists, for each repo, the addresses the daemon remembers:
 `connected` has an open session now, `failing (n)` failed the last `n` tries,
 and `idle` is neither. In the repo table, `SEEDING` is yes when this machine has the repo
@@ -570,6 +698,9 @@ clone, fetch new objects or push from it.
 state volumes.
 
 ## 11. Security notes
+
+- Anyone with the link can add merge requests and comments, which peers store
+  and pass on and nobody can delete (section 9b).
 
 - The TCP channel is Noise XX plus ML-KEM-768, then ChaCha20-Poly1305 frames.
   There is no classical-only fallback.
@@ -608,6 +739,8 @@ docker compose run --rm dev bash -c 'tests/e2e/m2.sh'
 docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/dht.sh'
 # M5: relay over the DHT, peer exchange, Announce, two seeders and gc.
 docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m5.sh'
+# Merge requests: propose, discuss, review and merge across three peers.
+docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/mr.sh'
 
 # R1 and R2: relay between isolated Docker networks, including a real clone.
 tests/e2e/relay.sh

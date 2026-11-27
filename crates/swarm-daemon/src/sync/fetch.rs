@@ -131,7 +131,7 @@ pub async fn fetch_about(
     best
 }
 
-async fn fetch_pack(
+pub(super) async fn fetch_pack(
     handle: SessionHandle,
     repo_ix: u16,
     wants: Vec<Oid>,

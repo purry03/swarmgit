@@ -15,10 +15,12 @@ use swarm_store::{keyio, Home};
 
 mod args;
 mod daemon;
+mod mr;
 mod repo;
 mod status;
 use args::{Cli, Cmd, KeyCmd, MaintainersCmd, MirrorCmd};
 use daemon::daemon;
+use mr::mr;
 use repo::{
     accept, export, gc, import, key_cmd, maintainers_cmd, mirror_export, purge, recovery_cmd,
     resolve_repo, rotate_cmd, unseed,
@@ -323,6 +325,8 @@ async fn inspect(link: &str, json_output: bool, show_progress: bool) -> i32 {
             }
         } else {
             print_about(&result);
+            print_lineage(&result);
+            print_names(&result);
             println!(
                 "{} seq={} refs={} peers={}",
                 result.get("repoId").and_then(Value::as_str).unwrap_or("?"),
@@ -346,6 +350,55 @@ fn print_about(result: &Value) {
     for key in ["name", "description"] {
         if let Some(text) = result.get(key).and_then(Value::as_str) {
             println!("{key}: {text}");
+        }
+    }
+}
+
+/// The repos on either side of a fork, when known.
+fn print_lineage(result: &Value) {
+    let line = |label: &str, repo: &Value| {
+        let Some(link) = repo.get("link").and_then(Value::as_str) else {
+            return;
+        };
+        match repo.get("name").and_then(Value::as_str) {
+            Some(name) => println!("{label}: {link} ({name})"),
+            None => println!("{label}: {link}"),
+        }
+    };
+    if let Some(upstream) = result.get("upstream") {
+        line("forked from", upstream);
+    }
+    for fork in result
+        .get("downstream")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        line("fork", fork);
+    }
+}
+
+/// Branch and tag names, one per line, the default branch marked.
+fn print_names(result: &Value) {
+    let head = result
+        .get("head")
+        .and_then(Value::as_str)
+        .and_then(|head| head.strip_prefix("refs/heads/"));
+    for (key, label) in [("branches", "branches"), ("tags", "tags")] {
+        let names: Vec<&str> = result
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        println!("{label}:");
+        for name in names {
+            let default = key == "branches" && Some(name) == head;
+            println!("  {name}{}", if default { " (default)" } else { "" });
         }
     }
 }
@@ -548,6 +601,11 @@ pub async fn run(args: Vec<String>) -> i32 {
             }
         },
         Cmd::Fork { link, json } => fork(&link, json).await,
+        Cmd::Mr {
+            repo,
+            offline,
+            command,
+        } => mr(repo, offline, command).await,
         Cmd::Mirror {
             command: MirrorCmd::Export { link, dir },
         } => mirror_export(&link, &dir).await,

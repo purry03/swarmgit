@@ -10,6 +10,7 @@ pub mod db;
 pub mod git;
 pub mod home;
 pub mod keyio;
+pub mod mr;
 pub mod relaydb;
 pub mod store;
 
