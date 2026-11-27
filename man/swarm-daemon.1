@@ -1,19 +1,16 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH swarm-daemon 1  "swarm 0.1.0" "Swarmgit manual"
+.TH swarm-daemon 1  "swarm 0.2.0" "Swarmgit manual"
 .SH NAME
 swarm\-daemon \- Start, stop or restart the background daemon
 .SH SYNOPSIS
-\fBswarm daemon\fR [\fB\-\-foreground\fR] [\fB\-\-experimental\-udp\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIsubcommands\fR]
+\fBswarm daemon\fR [\fB\-\-foreground\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Start, stop or restart the background daemon
 .SH OPTIONS
 .TP
 \fB\-\-foreground\fR
 Run the daemon in this terminal (for service managers)
-.TP
-\fB\-\-experimental\-udp\fR
-Try direct UDP paths between relayed peers (experimental)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

@@ -480,7 +480,7 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__daemon)
-            opts="-h --foreground --detach --experimental-udp --help start stop restart help"
+            opts="-h --foreground --detach --help start stop restart help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -564,7 +564,7 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__daemon__subcmd__restart)
-            opts="-h --experimental-udp --help"
+            opts="-h --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -578,7 +578,7 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__daemon__subcmd__start)
-            opts="-h --experimental-udp --help"
+            opts="-h --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -592,7 +592,7 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__daemon__subcmd__stop)
-            opts="-h --experimental-udp --help"
+            opts="-h --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2276,7 +2276,7 @@ _swarm() {
             return 0
             ;;
         swarm__subcmd__relay)
-            opts="-h --listen --name --allow-node --password-file --key-file --metrics --max-listeners --max-splices --listeners-per-ip --splices-per-ip --connects-per-minute --splice-kib-per-sec --node-daily-mib --idle-secs --no-network --public --allow-private --round-secs --help"
+            opts="-h --listen --name --allow-node --password-file --key-file --metrics --max-listeners --max-splices --listeners-per-ip --splices-per-ip --connects-per-minute --requests-per-minute --splice-kib-per-sec --node-daily-mib --idle-secs --no-network --public --allow-private --round-secs --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2323,6 +2323,10 @@ _swarm() {
                     return 0
                     ;;
                 --connects-per-minute)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --requests-per-minute)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

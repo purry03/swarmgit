@@ -46,6 +46,36 @@ async fn pipe(addr: &str, key: &NodeKey, listener: &mut RelayListener) -> (TcpSt
 }
 
 #[tokio::test]
+async fn info_and_lookup_requests_are_rate_limited() {
+    let (addr, _relay) = start(limited(Limits {
+        requests_per_minute: 3,
+        ..Limits::default()
+    }))
+    .await;
+    swarm_relay::client::info(&addr).await.unwrap();
+    // The first lookup may also ask for the relay's key, which counts.
+    let mut last = Ok(Vec::new());
+    for _ in 0..3 {
+        last = swarm_relay::client::lookup(&addr, [7; 32]).await;
+    }
+    assert_eq!(code(last), "limit_exceeded");
+}
+
+#[tokio::test]
+async fn a_full_relay_says_so() {
+    let (addr, _relay) = start(limited(Limits {
+        max_listeners: 1,
+        ..Limits::default()
+    }))
+    .await;
+    let _held = swarm_relay::listen(&addr, key()).await.unwrap();
+    match swarm_relay::listen(&addr, key()).await {
+        Err(err) => assert!(err.is_full(), "{err}"),
+        Ok(_) => panic!("a full relay took another listener"),
+    }
+}
+
+#[tokio::test]
 async fn one_address_holds_two_registrations() {
     let (addr, _relay) = start(limited(Limits::default())).await;
     let first = key();

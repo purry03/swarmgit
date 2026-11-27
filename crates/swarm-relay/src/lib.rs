@@ -36,7 +36,7 @@ pub use client::{
     connect, connect_with, listen, listen_with, lookup, publish, ListenState, RelayListener,
 };
 pub use directory::{directory_topic, Directory, DirectoryConfig};
-pub use error::RelayError;
+pub use error::{RelayError, FULL, FULL_ADVICE};
 pub use name::is_domain_name;
 pub use network::NetworkConfig;
 pub use secure::{key_text, split_key, RelayKey};

@@ -182,7 +182,7 @@ pub async fn status(state: &DaemonState, args: &Value) -> Result<Value, IpcError
         json!({
             "proxy": net.settings.proxy.as_ref().map(|proxy| proxy.server.clone()),
             "obfs": net.settings.obfs,
-            "experimental_udp": net.settings.experimental_udp,
+            "udp": net.settings.udp,
             "onion": onion.host,
             "onion_error": onion.error,
         })

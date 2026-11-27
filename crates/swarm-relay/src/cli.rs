@@ -56,6 +56,9 @@ pub struct RelayArgs {
     /// Most connect attempts from one address in a minute.
     #[arg(long, default_value_t = 20)]
     connects_per_minute: usize,
+    /// Most info and lookup requests from one address in a minute.
+    #[arg(long, default_value_t = 120)]
+    requests_per_minute: usize,
     /// Rate of one splice in KiB per second, 0 for no limit.
     #[arg(long, default_value_t = 8 * 1024)]
     splice_kib_per_sec: u64,
@@ -178,6 +181,7 @@ pub async fn run(args: RelayArgs) -> anyhow::Result<()> {
             listeners_per_ip: args.listeners_per_ip,
             splices_per_ip: args.splices_per_ip,
             connects_per_minute: args.connects_per_minute,
+            requests_per_minute: args.requests_per_minute,
             splice_bytes_per_second: args.splice_kib_per_sec.saturating_mul(1024),
             node_daily_bytes: args.node_daily_mib.saturating_mul(1024 * 1024),
             idle: Duration::from_secs(args.idle_secs),

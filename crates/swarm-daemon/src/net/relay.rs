@@ -378,6 +378,7 @@ async fn wanted_relays(net: &Arc<NetState>, configured: &[String]) -> Vec<String
 
 async fn maintain(net: Arc<NetState>, name: String, slots: Arc<Semaphore>) {
     let mut delay = RETRY_MIN;
+    let mut said_full = false;
     let mut listener = loop {
         let password = net.relay_password_for(&name);
         match swarm_relay::listen_with(&name, Arc::clone(&net.node), password).await {
@@ -386,8 +387,16 @@ async fn maintain(net: Arc<NetState>, name: String, slots: Arc<Semaphore>) {
                 tracing::debug!(relay = %name, error = %err, "relay registration failed");
                 net.update_relay(&name, |status| {
                     status.registered = false;
-                    status.error = Some(err.to_string());
+                    status.error = Some(shown(&err.to_string()));
                 });
+                if err.is_full() && !said_full {
+                    said_full = true;
+                    tracing::warn!(
+                        relay = %name,
+                        "relay is full. {}",
+                        swarm_relay::FULL_ADVICE
+                    );
+                }
                 // A discovered relay that will not take us drops down the
                 // ranking, so the next review can pick another.
                 if let Some(discovery) = net.discovery() {
@@ -476,6 +485,15 @@ async fn serve_relayed(net: Arc<NetState>, stream: TcpStream, name: &str) {
     }
 }
 
+/// A registration error as `swarm status` shows it.
+fn shown(error: &str) -> String {
+    if error.ends_with(swarm_relay::FULL) {
+        format!("{}. {}", swarm_relay::FULL, swarm_relay::FULL_ADVICE)
+    } else {
+        error.to_string()
+    }
+}
+
 fn apply(status: &mut RelayStatus, state: &ListenState) {
     match state {
         ListenState::Registered { observed } => {
@@ -487,7 +505,7 @@ fn apply(status: &mut RelayStatus, state: &ListenState) {
         }
         ListenState::Reconnecting { error } => {
             status.registered = false;
-            status.error = Some(error.clone());
+            status.error = Some(shown(error));
         }
     }
 }

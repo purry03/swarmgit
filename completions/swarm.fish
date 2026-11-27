@@ -217,6 +217,7 @@ complete -c swarm -n "__fish_swarm_using_subcommand relay" -l max-splices -d 'Mo
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -l listeners-per-ip -d 'Most nodes registered from one address' -r
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -l splices-per-ip -d 'Most splices one dialing address may have open' -r
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -l connects-per-minute -d 'Most connect attempts from one address in a minute' -r
+complete -c swarm -n "__fish_swarm_using_subcommand relay" -l requests-per-minute -d 'Most info and lookup requests from one address in a minute' -r
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -l splice-kib-per-sec -d 'Rate of one splice in KiB per second, 0 for no limit' -r
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -l node-daily-mib -d 'Most bytes carried for one node in a day, in MiB' -r
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -l idle-secs -d 'Close a splice after this many idle seconds' -r
@@ -227,17 +228,13 @@ complete -c swarm -n "__fish_swarm_using_subcommand relay" -l allow-private -d '
 complete -c swarm -n "__fish_swarm_using_subcommand relay" -s h -l help -d 'Print help'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -l foreground -d 'Run the daemon in this terminal (for service managers)'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -l detach -d 'Run as an already-detached process (used by autostart)'
-complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -l experimental-udp -d 'Try direct UDP paths between relayed peers (experimental)'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -s h -l help -d 'Print help'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -f -a "start" -d 'Start the daemon in the background'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -f -a "stop" -d 'Stop the running daemon'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -f -a "restart" -d 'Stop the daemon if it is running, then start it'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and not __fish_seen_subcommand_from start stop restart help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from start" -l experimental-udp -d 'Try direct UDP paths between relayed peers (experimental)'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from start" -s h -l help -d 'Print help'
-complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from stop" -l experimental-udp -d 'Try direct UDP paths between relayed peers (experimental)'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from stop" -s h -l help -d 'Print help'
-complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from restart" -l experimental-udp -d 'Try direct UDP paths between relayed peers (experimental)'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from restart" -s h -l help -d 'Print help'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from help" -f -a "start" -d 'Start the daemon in the background'
 complete -c swarm -n "__fish_swarm_using_subcommand daemon; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Stop the running daemon'

@@ -104,7 +104,7 @@ on() {
     local ns=$1 home=$2
     shift 2
     ip netns exec "$ns" env SWARM_HOME="$home" SWARM_RELAYS="$RELAY_NAME:$RPORT" \
-        SWARM_RELAY_DISCOVERY=off SWARM_RELAY_MODE=always SWARM_EXPERIMENTAL_UDP=1 \
+        SWARM_RELAY_DISCOVERY=off SWARM_RELAY_MODE=always \
         SWARM_LOG=info "$@"
 }
 

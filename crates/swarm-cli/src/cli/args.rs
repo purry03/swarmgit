@@ -198,9 +198,6 @@ pub(super) enum Cmd {
         /// Run as an already-detached process (used by autostart).
         #[arg(long, hide = true)]
         detach: bool,
-        /// Try direct UDP paths between relayed peers (experimental).
-        #[arg(long, global = true)]
-        experimental_udp: bool,
         #[command(subcommand)]
         action: Option<DaemonCmd>,
     },

@@ -1,4 +1,4 @@
-//! Experimental UDP hole punching (spec 11.10, `--experimental-udp`).
+//! UDP hole punching (spec 11.10), on unless the `udp` setting is false.
 //!
 //! Two peers that only reach each other through a relay use that session to
 //! swap UDP candidates, punch a path, and run a second, ordinary handshake
@@ -118,7 +118,7 @@ pub async fn upgrade(
     relay: &Endpoint,
 ) -> Option<SessionHandle> {
     // Never on behind a proxy, so resolving the relay's name leaks nothing.
-    if !net.settings.experimental_udp || !relayed.info().caps.iter().any(|cap| cap == CAP) {
+    if !net.settings.udp || !relayed.info().caps.iter().any(|cap| cap == CAP) {
         return None;
     }
     let relay = reflector(relay).await?;
@@ -186,7 +186,7 @@ pub async fn answer(
     token: [u8; 16],
     addresses: Vec<Vec<u8>>,
 ) -> bool {
-    if !net.settings.experimental_udp {
+    if !net.settings.udp {
         return false;
     }
     let Ok(_permit) = Arc::clone(&net.punches).try_acquire_owned() else {

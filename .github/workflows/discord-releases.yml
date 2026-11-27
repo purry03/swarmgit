@@ -1,8 +1,19 @@
+# Post a release to Discord. release.yml calls this after publishing: GitHub
+# does not start workflows for a release that a workflow itself created. The
+# `release` trigger covers releases published by hand.
 name: Announce releases
 
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      DISCORD_WEBHOOK:
+        required: false
 
 permissions:
   contents: read
@@ -14,31 +25,24 @@ jobs:
       - name: Post the release to Discord
         env:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          NAME: ${{ github.event.release.name }}
-          TAG: ${{ github.event.release.tag_name }}
-          URL: ${{ github.event.release.html_url }}
-          BODY: ${{ github.event.release.body }}
-          AUTHOR: ${{ github.event.release.author.login }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ -z "$WEBHOOK" ]; then
             echo "DISCORD_WEBHOOK secret is not set" >&2
             exit 1
           fi
-          jq -n \
-            --arg name "$NAME" \
-            --arg tag "$TAG" \
-            --arg url "$URL" \
-            --arg body "$BODY" \
-            --arg author "$AUTHOR" \
-            '{
+          gh release view "$TAG" --json name,tagName,url,body,author |
+            jq '{
               username: "swarmgit",
               embeds: [{
-                title: (if $name == "" then $tag else $name end),
-                url: $url,
-                description: ($body[0:1800]),
+                title: (if .name == "" then .tagName else .name end),
+                url: .url,
+                description: (.body[0:1800]),
                 color: 15622994,
-                author: { name: ("release " + $tag) },
-                footer: { text: ("by " + $author) }
+                author: { name: ("release " + .tagName) },
+                footer: { text: ("by " + .author.login) }
               }]
             }' > payload.json
           curl -sSf -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK"

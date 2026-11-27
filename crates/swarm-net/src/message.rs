@@ -145,7 +145,7 @@ pub enum Message {
         /// Echoed nonce.
         nonce: u64,
     },
-    /// Type 17, experimental: "punch a UDP path to me". Sent only to peers
+    /// Type 17: "punch a UDP path to me". Sent only to peers
     /// with the `udp-punch` capability.
     PunchOffer {
         /// Request ID.

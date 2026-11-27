@@ -23,8 +23,8 @@ pub struct Settings {
     /// Caps for visitors through the hidden service
     /// (`SWARM_ONION_MAX_CONNECTIONS`, `SWARM_ONION_MAX_PER_MINUTE`).
     pub onion_limits: OnionLimits,
-    /// UDP hole punching (`SWARM_EXPERIMENTAL_UDP`).
-    pub experimental_udp: bool,
+    /// UDP hole punching: on unless `SWARM_NO_UDP` or a proxy turns it off.
+    pub udp: bool,
     /// Upload cap in kilobits per second, 0 for none (`SWARM_UPLOAD_KBPS`).
     pub upload_kbps: u64,
     /// Bytes one relayed session may carry (`SWARM_RELAY_MAX_BYTES`).
@@ -90,10 +90,8 @@ impl Settings {
             None => super::capped::DEFAULT_MAX_BYTES,
         };
         let proxy = Proxy::from_env()?;
-        let experimental_udp = flag("SWARM_EXPERIMENTAL_UDP");
-        if experimental_udp && proxy.is_some() {
-            tracing::warn!("experimental UDP is off: UDP cannot go through the SOCKS5 proxy");
-        }
+        // UDP cannot go through a SOCKS5 proxy, and would go around it.
+        let udp = !flag("SWARM_NO_UDP") && proxy.is_none();
         let defaults = OnionLimits::default();
         let onion_limits = OnionLimits {
             max_connections: number(
@@ -111,7 +109,7 @@ impl Settings {
         };
         Ok(Self {
             onion_limits,
-            experimental_udp: experimental_udp && proxy.is_none(),
+            udp,
             proxy,
             obfs: flag("SWARM_OBFS"),
             onion_control: value("SWARM_ONION_CONTROL"),

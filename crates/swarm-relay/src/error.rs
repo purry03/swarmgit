@@ -28,7 +28,20 @@ pub enum RelayError {
     Auth(String),
 }
 
+/// What a relay says when it has no room for anyone else.
+pub const FULL: &str = "relay is full";
+
+/// What to tell a person who ran into a full relay.
+pub const FULL_ADVICE: &str = "Try again later or use another relay. Any machine \
+    that accepts incoming connections can run one with `swarm relay`.";
+
 impl RelayError {
+    /// True when the relay refused because it is at capacity.
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        matches!(self, Self::Remote { code, msg } if code == "limit_exceeded" && msg == FULL)
+    }
+
     /// The error code: the relay's own, or `auth_failed` for a proof or a
     /// relay key that did not check out.
     #[must_use]

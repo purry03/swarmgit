@@ -39,15 +39,15 @@ You need `git`. Packages are at `https://swarmgit.com/downloads/`.
 
 | Platform | File (x86_64) | File (ARM64) |
 | --- | --- | --- |
-| Debian, Ubuntu | `swarmgit_0.1.0_amd64.deb` | `swarmgit_0.1.0_arm64.deb` |
-| Fedora, RHEL | `swarmgit-0.1.0-1.x86_64.rpm` | `swarmgit-0.1.0-1.aarch64.rpm` |
-| Other Linux | `swarmgit-0.1.0-linux-x86_64.tar.gz` | `swarmgit-0.1.0-linux-aarch64.tar.gz` |
-| macOS | `swarmgit-0.1.0-macos-x86_64.tar.gz` | `swarmgit-0.1.0-macos-aarch64.tar.gz` |
+| Debian, Ubuntu | `swarmgit_0.2.0_amd64.deb` | `swarmgit_0.2.0_arm64.deb` |
+| Fedora, RHEL | `swarmgit-0.2.0-1.x86_64.rpm` | `swarmgit-0.2.0-1.aarch64.rpm` |
+| Other Linux | `swarmgit-0.2.0-linux-x86_64.tar.gz` | `swarmgit-0.2.0-linux-aarch64.tar.gz` |
+| macOS | `swarmgit-0.2.0-macos-x86_64.tar.gz` | `swarmgit-0.2.0-macos-aarch64.tar.gz` |
 
 ### Check the download
 
 ```bash
-curl -O https://swarmgit.com/downloads/swarmgit_0.1.0_amd64.deb
+curl -O https://swarmgit.com/downloads/swarmgit_0.2.0_amd64.deb
 curl -O https://swarmgit.com/downloads/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
 ```
@@ -58,20 +58,20 @@ On macOS use `shasum -a 256 <file>` and compare it with the line in
 ### Debian and Ubuntu
 
 ```bash
-sudo apt install ./swarmgit_0.1.0_amd64.deb
+sudo apt install ./swarmgit_0.2.0_amd64.deb
 ```
 
 ### Fedora and RHEL
 
 ```bash
-sudo dnf install ./swarmgit-0.1.0-1.x86_64.rpm
+sudo dnf install ./swarmgit-0.2.0-1.x86_64.rpm
 ```
 
 ### Archive (any Linux, or macOS)
 
 ```bash
-tar xzf swarmgit-0.1.0-macos-aarch64.tar.gz
-cd swarmgit-0.1.0-macos-aarch64
+tar xzf swarmgit-0.2.0-macos-aarch64.tar.gz
+cd swarmgit-0.2.0-macos-aarch64
 sudo cp -R bin/swarm bin/git-remote-swarm bin/swarm-relay /usr/local/bin/
 ```
 
@@ -114,11 +114,11 @@ Deleting that directory deletes your signing keys for good.
 
 ### Build from source
 
-The repository pins a Rust toolchain, so build in the development container:
+You need Rust 1.87 or newer and a C compiler. From the source tree:
 
 ```bash
-docker compose run --rm dev cargo build --release -p swarm-cli
-scripts/package.sh --deb --arch x86_64     # or build a package into dist/
+cargo install --locked --path crates/swarm-cli
+ln -s swarm ~/.cargo/bin/git-remote-swarm   # Git needs this name
 ```
 
 ## 3. Quick start
@@ -644,7 +644,7 @@ Neither bundles nor mirrors carry names, descriptions or merge requests.
 ## 14. Reading `swarm status`
 
 ```text
-Daemon    running (pid 207, version 0.1.0)
+Daemon    running (pid 207, version 0.2.0)
 Listen    0.0.0.0:42424
 Node      <node-id>
 
@@ -771,7 +771,7 @@ that started it, so prefer the files over environment variables.
 | `onion_max_connections` | `SWARM_ONION_MAX_CONNECTIONS` | `16` onion visitors at once. |
 | `onion_max_per_minute` | `SWARM_ONION_MAX_PER_MINUTE` | `120` new onion connections per minute. |
 | `obfs` | `SWARM_OBFS` | `false`. Vary handshake sizes and timing. |
-| `experimental_udp` | `SWARM_EXPERIMENTAL_UDP` | `false`. Try a direct UDP path past a relay. |
+| `udp` | `SWARM_NO_UDP=1` | Enabled by default. Peers try a direct UDP connection after meeting through a relay. Set `udp: false` to disable it. |
 
 ## 17. Privacy and hardening
 
@@ -785,9 +785,13 @@ that started it, so prefer the files over environment variables.
 - **Inbound limits.** The daemon accepts 64 connections at once, 4 from one
   address and 60 new ones a minute from one address. An address that breaks the
   protocol 3 times is ignored for 10 minutes.
-- **UDP hole punching (experimental).** With `experimental_udp` at both ends,
-  two peers that met through a relay try a direct UDP path. If it fails, the
-  relayed connection carries on. IPv4 only, no congestion control.
+- **UDP hole punching.** By default, peers try a direct UDP connection after
+  meeting through a relay. If it fails, or the direct path drops during a
+  transfer, they continue over the relay. This reveals each peer's IP address
+  to the other; set `udp: false` on either peer to prevent it. UDP works only
+  over IPv4 and often fails behind symmetric NAT. Like TCP, it slows down when
+  packets are lost. Swarmgit disables it automatically when a proxy is
+  configured.
 
 ## 18. Command reference
 
@@ -850,6 +854,12 @@ Check that the other machine's daemon is running (`swarm status` there), that
 the address in the link is right, and that TCP 42424 is open. From mobile data
 or two home networks, neither side may be able to accept connections: use a
 relay (section 10).
+
+**`relay is full`.** The relay has reached a server-wide limit and cannot take
+another registration, session, or waiting request. Try again later or use
+another relay. To run your own, use `swarm relay` on a machine that accepts
+incoming connections; see the [relay guide](RELAY-GUIDE.md). A machine that
+cannot register shows the same message in `swarm status relays`.
 
 **`no_peers` mentions a relay.** The relay was tried, but the seeder is not
 registered with it or is offline. Run `swarm status relays` on the seeder and
@@ -923,80 +933,23 @@ section 9.
 - Anyone with the link can add merge requests and comments, which nobody can
   delete (section 7).
 
-## Appendix A: Try two peers in Docker
-
-This runs two peers on your machine without installing anything but Docker with
-Compose v2. From the source tree:
+## Appendix: Testing and development
 
 ```bash
-docker compose -f compose.peers.yaml up -d --build
-./scripts/peers-demo.sh                # clone, push and pull; prints PASS
-```
+cargo build --workspace
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --locked --workspace
 
-To do it by hand, open a shell on each peer:
-
-```bash
-docker compose -f compose.peers.yaml exec peer-a bash
-docker compose -f compose.peers.yaml exec peer-b bash
-```
-
-On `peer-a`:
-
-```bash
-cd /state/work
-mkdir src && cd src
-git init -b main
-swarm init
-printf 'hello from A\n' > README.md
-git add README.md
-git commit -m one
-git push swarm main
-swarm link
-```
-
-On `peer-b`, paste the link:
-
-```bash
-cd /state/work
-git clone '<link from A>' clone
-cd clone
-git log --oneline
-```
-
-The containers are named `a` and `b` on their network and keep their state in
-`/state`. To delete everything:
-
-```bash
-docker compose -f compose.peers.yaml down -v
-```
-
-## Appendix B: Testing and development
-
-All builds and tests run in the development image:
-
-```bash
-docker compose run --rm dev bash -c 'cargo build --workspace'
-docker compose run --rm dev bash -c 'cargo test --workspace'
-docker compose run --rm dev bash -c 'cargo clippy --workspace --all-targets -- -D warnings'
-docker compose run --rm dev bash -c 'cargo fmt --all -- --check'
-
-# End-to-end scripts; each needs the workspace built first.
-docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m1.sh'
-docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m2.sh'
-docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/dht.sh'
-docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/m5.sh'
-docker compose run --rm dev bash -c 'cargo build --workspace && tests/e2e/mr.sh'
-
-# Relay between isolated Docker networks, run on the host.
-tests/e2e/relay.sh
+# End-to-end scripts; build the workspace first.
+tests/e2e/m1.sh
 
 # Against the public Mainline DHT (needs internet access).
-docker compose run --rm -e SWARM_LIVE_DHT=1 dev bash -c \
-    'cargo test -p swarm-disc live_dht -- --ignored'
-
-# Everything. Uses a privileged container.
-scripts/ci.sh
+SWARM_LIVE_DHT=1 cargo test -p swarm-disc live_dht -- --ignored
 ```
 
-After changing the command line, run `scripts/gen-completions.sh` inside the
-container to update completions and manual pages.
+The network tests need Linux and root. `.github/workflows/ci.yml` lists the
+tools to install and how the full run, `scripts/ci.sh`, is started.
+
+After changing the command line, run `scripts/gen-completions.sh` to update
+completions and manual pages.

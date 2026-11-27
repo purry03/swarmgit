@@ -19,8 +19,11 @@ head -c 5 "$WORK/repo.swarmbundle" | grep -q SWGB1
 echo "== import on a machine with no network, then clone"
 export SWARM_HOME=$B
 swarm daemon stop >/dev/null 2>&1 || true
-if unshare -rn true 2>/dev/null; then
-    NONET="unshare -rn"
+# Root needs no user namespace for this, and must not have one: inside it, root
+# cannot reach other users' files, such as a build in a CI runner's home.
+if [[ $(id -u) -eq 0 ]]; then userns=(-n); else userns=(-rn); fi
+if unshare "${userns[@]}" true 2>/dev/null; then
+    NONET="unshare ${userns[*]}"
     $NONET bash -c 'ip link set lo up 2>/dev/null; true'
 else
     echo "(no network namespaces here; importing without them)"

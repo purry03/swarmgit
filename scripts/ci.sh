@@ -4,10 +4,21 @@
 # test (tests/e2e/lan.sh) really runs; a SKIP from any e2e script fails CI.
 #
 #   scripts/ci.sh            # from the host: re-runs itself in Docker
+#   scripts/ci.sh checks     # format, lint, unit and integration tests only
+#   scripts/ci.sh e2e        # end-to-end scripts only
 #   SWARM_CI_INSIDE=1 ...    # already inside a suitable container
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+part=${1:-all}
+case $part in
+    all | checks | e2e) ;;
+    *)
+        echo "usage: scripts/ci.sh [checks|e2e]" >&2
+        exit 2
+        ;;
+esac
 
 if [[ ${SWARM_CI_INSIDE:-} != 1 ]]; then
     exec docker compose -f compose.yaml -f compose.privileged.yaml run --rm -T \
@@ -26,31 +37,47 @@ trap 'chown -R "${HOST_UID:-1000}:${HOST_GID:-1000}" "$CARGO_TARGET_DIR" 2>/dev/
 
 step() { printf '\n== %s\n' "$*"; }
 
-step "cargo fmt --check"
-cargo fmt --all -- --check
+if [[ $part != e2e ]]; then
+    step "cargo fmt --check"
+    cargo fmt --all -- --check
 
-step "cargo clippy -D warnings"
-cargo clippy --locked --workspace --all-targets -- -D warnings
+    step "cargo clippy -D warnings"
+    cargo clippy --locked --workspace --all-targets -- -D warnings
 
-step "cargo test"
-# INV-5: every earlier test passes with the DHT off; the DHT unit tests run
-# their own local testnet regardless. No test maps ports on a real gateway.
-SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --locked --workspace -q
+    step "cargo test"
+    # INV-5: every earlier test passes with the DHT off; the DHT unit tests run
+    # their own local testnet regardless. No test maps ports on a real gateway.
+    SWARM_NO_DHT=1 SWARM_NO_UPNP=1 cargo test --locked --workspace -q
+fi
 
-step "cargo build"
-cargo build --locked --workspace -q
+if [[ $part != checks ]]; then
+    step "cargo build"
+    cargo build --locked --workspace -q
 
-for script in tests/e2e/m1.sh tests/e2e/m2.sh tests/e2e/lan.sh \
-    tests/e2e/dht.sh tests/e2e/m5.sh tests/e2e/m6.sh tests/e2e/m7.sh tests/e2e/m8.sh \
-    tests/e2e/relaynet.sh tests/e2e/m9.sh tests/e2e/punch.sh tests/e2e/about.sh \
-    tests/e2e/mr.sh; do
-    step "$script"
-    out=$(mktemp)
-    bash "$script" 2>&1 | tee "$out"
-    if grep -q '^SKIP' "$out"; then
-        echo "FAIL: $script skipped; CI must run it" >&2
+    # Every script runs, so one run reports everything that is broken.
+    failed=()
+    times=()
+    for script in tests/e2e/m1.sh tests/e2e/m2.sh tests/e2e/lan.sh \
+        tests/e2e/dht.sh tests/e2e/m5.sh tests/e2e/m6.sh tests/e2e/m7.sh \
+        tests/e2e/m8.sh tests/e2e/relaynet.sh tests/e2e/m9.sh tests/e2e/punch.sh \
+        tests/e2e/about.sh tests/e2e/mr.sh; do
+        step "$script"
+        out=$(mktemp)
+        started=$SECONDS
+        if ! bash "$script" 2>&1 | tee "$out"; then
+            failed+=("$script")
+        elif grep -q '^SKIP' "$out"; then
+            failed+=("$script (skipped; CI must run it)")
+        fi
+        times+=("$((SECONDS - started))s $script")
+    done
+
+    step "time per script"
+    printf '%s\n' "${times[@]}" | sort -rn
+    if ((${#failed[@]})); then
+        printf 'FAIL: %s\n' "${failed[@]}" >&2
         exit 1
     fi
-done
+fi
 
 printf '\nCI PASS\n'

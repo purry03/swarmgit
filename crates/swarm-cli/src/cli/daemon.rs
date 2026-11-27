@@ -54,7 +54,7 @@ async fn stop(home: &Home) -> Result<bool, i32> {
     }
 }
 
-async fn start(home: Home, experimental_udp: bool) -> i32 {
+async fn start(home: Home) -> i32 {
     match Client::attach(home.clone()).await {
         Ok(mut client) => {
             let hello = match client.call("hello", json!({})).await {
@@ -62,7 +62,7 @@ async fn start(home: Home, experimental_udp: bool) -> i32 {
                 Err(err) => return fail(&err),
             };
             let version = hello.get("daemon_version").and_then(Value::as_str);
-            if version != Some(env!("CARGO_PKG_VERSION")) || experimental_udp {
+            if version != Some(env!("CARGO_PKG_VERSION")) {
                 eprintln!(
                     "swarm: daemon is already running{}; run `swarm daemon restart` to apply changes",
                     pid_text(&hello)
@@ -89,11 +89,7 @@ async fn start(home: Home, experimental_udp: bool) -> i32 {
 }
 
 /// `run_here` is `--foreground`, or `--detach` as used by autostart.
-pub(super) async fn daemon(
-    run_here: bool,
-    experimental_udp: bool,
-    action: Option<DaemonCmd>,
-) -> i32 {
+pub(super) async fn daemon(run_here: bool, action: Option<DaemonCmd>) -> i32 {
     if action.is_none() && !run_here {
         let mut command = Cli::command();
         command.build();
@@ -121,7 +117,7 @@ pub(super) async fn daemon(
                 1
             }
         },
-        Some(DaemonCmd::Start) => start(home, experimental_udp).await,
+        Some(DaemonCmd::Start) => start(home).await,
         Some(DaemonCmd::Stop) => match stop(&home).await {
             Ok(true) => {
                 eprintln!("swarm: daemon stopped");
@@ -134,7 +130,7 @@ pub(super) async fn daemon(
             Err(code) => code,
         },
         Some(DaemonCmd::Restart) => match stop(&home).await {
-            Ok(_) => start(home, experimental_udp).await,
+            Ok(_) => start(home).await,
             Err(code) => code,
         },
     }

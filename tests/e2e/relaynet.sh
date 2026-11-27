@@ -12,6 +12,10 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 export PATH=$PATH:/usr/sbin:/sbin
+# This is about reaching a node through relays. A punched UDP path would take
+# the transfer off the relay and past the firewall rule below, which only stops
+# TCP; punch.sh and m9.sh test that.
+export SWARM_NO_UDP=1
 
 [[ -x $SWARM_BIN_DIR/swarm-dht-testnet && -x $SWARM_BIN_DIR/swarm-relay-peer ]] ||
     swarm_fail "missing test binaries; run: cargo build --workspace"

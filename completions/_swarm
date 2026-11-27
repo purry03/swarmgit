@@ -655,6 +655,7 @@ _arguments "${_arguments_options[@]}" : \
 '--listeners-per-ip=[Most nodes registered from one address]:LISTENERS_PER_IP:_default' \
 '--splices-per-ip=[Most splices one dialing address may have open]:SPLICES_PER_IP:_default' \
 '--connects-per-minute=[Most connect attempts from one address in a minute]:CONNECTS_PER_MINUTE:_default' \
+'--requests-per-minute=[Most info and lookup requests from one address in a minute]:REQUESTS_PER_MINUTE:_default' \
 '--splice-kib-per-sec=[Rate of one splice in KiB per second, 0 for no limit]:SPLICE_KIB_PER_SEC:_default' \
 '--node-daily-mib=[Most bytes carried for one node in a day, in MiB]:NODE_DAILY_MIB:_default' \
 '--idle-secs=[Close a splice after this many idle seconds]:IDLE_SECS:_default' \
@@ -670,7 +671,6 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '--foreground[Run the daemon in this terminal (for service managers)]' \
 '--detach[Run as an already-detached process (used by autostart)]' \
-'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ":: :_swarm__subcmd__daemon_commands" \
@@ -685,21 +685,18 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (start)
 _arguments "${_arguments_options[@]}" : \
-'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (stop)
 _arguments "${_arguments_options[@]}" : \
-'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (restart)
 _arguments "${_arguments_options[@]}" : \
-'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
