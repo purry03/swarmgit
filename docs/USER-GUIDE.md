@@ -258,8 +258,10 @@ connected peer or at their next sync. Bundles and mirrors do not carry them.
 swarm inspect '<link>'
 ```
 
-This asks a peer for the signed metadata and checks it, without downloading any
-git objects:
+This asks peers for the signed metadata and checks it, without downloading any
+git objects. It spends a few more seconds looking for other peers after the
+first answers. `peers=` counts those it reached, which may be fewer than all that
+hold the repository:
 
 ```text
 name: demo

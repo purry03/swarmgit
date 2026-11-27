@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/VrT9CTjU3y"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865f2?style=flat-square&logo=discord&logoColor=white"></a>
+  <a href="https://t.me/+6a4SrCk6tU8zNWVi"><img alt="Telegram" src="https://img.shields.io/badge/chat-Telegram-26a5e4?style=flat-square&logo=telegram&logoColor=white"></a>
   <a href="https://github.com/purry03/swarmgit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/purry03/swarmgit/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-ee6352?style=flat-square"></a>
   <img alt="Status: pre-1.0" src="https://img.shields.io/badge/status-pre--1.0-8b8991?style=flat-square">
@@ -24,11 +24,24 @@ authenticated with a mix of established and post-quantum cryptography.
 You keep the Git commands you already know. Swarmgit finds peers, moves the
 objects and checks everything that arrives.
 
-**Contents:** [Install](#install) · [Get this repository over Swarmgit](#get-this-repository-over-swarmgit) ·
+**Contents:** [Get this repository over Swarmgit](#get-this-repository-over-swarmgit) · [Install](#install) ·
 [Share a repository](#share-a-repository) · [Clone](#clone-and-update) ·
 [Merge requests](#merge-requests) · [More commands](#more-commands) ·
 [If a clone cannot connect](#if-a-clone-cannot-connect) · [Relays](#relays) ·
 [How it works](#how-it-works) · [Development](#development) · [Documentation](#documentation) · [Community](#community)
+
+## Get this repository over Swarmgit
+
+Swarmgit's own source is shared on Swarmgit. Once Swarmgit is
+[installed](#install):
+
+```bash
+git clone 'swarm://najdcuvszxvqowm2m4uhprqj6ctime3jhcg3ufczpvsyzazev5qa?h=relay:relay.swarmgit.com:42425@sz7x7keuqjneqlycogdqa2swzzs2z2rmg4pq2ev4xt6nf2dk5uya&h=relay:relay.swarmgit.com:42425@4nhgyz4np4m27mp5g2v6gvhvvjpv2pl5hahfql2lf36jpiquh2tq' swarmgit
+```
+
+Keep the quotes, because the link contains characters your shell would
+otherwise interpret. Your daemon then serves the copy too, which helps others
+get it; `swarm unseed` with the same link stops that.
 
 ## Install
 
@@ -78,18 +91,6 @@ swarm status
 
 A background daemon starts by itself when a command needs it. After an upgrade,
 run `swarm daemon restart` so the new version takes over.
-
-## Get this repository over Swarmgit
-
-Swarmgit's own source is shared on Swarmgit. Once installed:
-
-```bash
-git clone 'swarm://najdcuvszxvqowm2m4uhprqj6ctime3jhcg3ufczpvsyzazev5qa?h=relay:relay.swarmgit.com:42425@sz7x7keuqjneqlycogdqa2swzzs2z2rmg4pq2ev4xt6nf2dk5uya' swarmgit
-```
-
-Keep the quotes, because the link contains characters your shell would
-otherwise interpret. Your daemon then serves the copy too, which helps others
-get it; `swarm unseed` with the same link stops that.
 
 ## Share a repository
 
@@ -295,7 +296,7 @@ and publishes them.
 ## Community
 
 Questions, bug reports and ideas are welcome on
-[Discord](https://discord.gg/VrT9CTjU3y).
+[Telegram](https://t.me/+6a4SrCk6tU8zNWVi).
 
 ## License
 

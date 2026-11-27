@@ -2,6 +2,11 @@
 
 All notable changes to Swarmgit are recorded here.
 
+## Unreleased
+
+- `swarm inspect` keeps looking after the first peer answers, so it lists more of
+  the peers that hold a repository. This can take up to 10 seconds longer.
+
 ## 0.2.0 (2026-11-27)
 
 - UDP hole punching is enabled by default. After meeting through a relay, peers

@@ -17,7 +17,7 @@ use swarm_net::NetError;
 use swarm_store::RepoStore;
 
 use crate::net::NetState;
-use dial::{Candidate, Dialer, MAX_SESSIONS};
+use dial::{Candidate, Dialer, MAX_SESSIONS, SURVEY_SESSIONS};
 use progress::Progress;
 
 /// Outcome of one sync.
@@ -67,6 +67,9 @@ pub async fn sync_repo(
 ) -> Result<SyncResult, NetError> {
     sync_repo_inner(net, repo, hints, progress, false).await
 }
+
+/// Longest an inspect goes on looking for more peers after the first.
+const SURVEY_TIME: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Read and verify repository heads without requesting Git objects or writing
 /// a local repository store.
@@ -190,7 +193,7 @@ async fn sync_repo_inner(
     // Nothing direct worked: look for the relays that hold the nodes we know
     // by ID (REL-29, REL-32).
     if dialer.connected.is_empty() {
-        relayed::dial(net, repo, &mut dialer, &retry_candidates, progress).await;
+        relayed::dial(net, repo, &mut dialer, &retry_candidates, progress, false).await;
     }
 
     // Route B answers within the query burst (0 s, 1 s, 3 s). Wait for it only
@@ -254,6 +257,30 @@ async fn sync_repo_inner(
         });
     }
 
+    // An inspect reports who holds the repo, so one answer is not enough: ask
+    // the routes that were skipped once a peer was found.
+    if metadata_only {
+        let survey = async {
+            if let Some(lookup) = dht_lookup.take() {
+                progress.say("dht", "searching the DHT for more peers");
+                let found = lookup.await.unwrap_or_default();
+                dialer
+                    .dial_all(
+                        net,
+                        repo,
+                        dial::dedupe(dial::unpinned(found), net.node_id),
+                        SURVEY_SESSIONS,
+                    )
+                    .await;
+            }
+            relayed::dial(net, repo, &mut dialer, &retry_candidates, progress, true).await;
+        };
+        // Peers reached before the time runs out stay connected.
+        if tokio::time::timeout(SURVEY_TIME, survey).await.is_err() {
+            tracing::debug!("stopped looking for more peers");
+        }
+    }
+
     progress.say(
         "heads",
         format!(
@@ -314,7 +341,7 @@ async fn sync_repo_inner(
         let peer_ids: Vec<String> = dialer
             .connected
             .iter()
-            .filter(|peer| !peer.failed)
+            .filter(|peer| !peer.failed && peer.note.is_none())
             .map(|peer| peer.node().to_base32())
             .collect();
         return Ok(SyncResult {

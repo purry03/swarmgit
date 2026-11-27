@@ -7,7 +7,7 @@ use swarm_core::ids::{NodeId, RepoId};
 use swarm_net::addr::PeerAddr;
 use swarm_net::proxy::Endpoint;
 
-use super::dial::{Candidate, Dialer, MAX_SESSIONS};
+use super::dial::{Candidate, Dialer, MAX_SESSIONS, SURVEY_SESSIONS};
 use super::progress::Progress;
 use crate::net::relay::{address_of, configured, mode, Mode};
 use crate::net::{topics, NetState};
@@ -40,30 +40,37 @@ async fn routes(net: &NetState, nodes: &[NodeId]) -> Vec<Candidate> {
 }
 
 /// Dial the pinned nodes among `candidates` through relays, then whoever
-/// published the repo's topic (R6).
+/// published the repo's topic (R6). The topic is only looked up when that
+/// reached nobody, unless `every` asks for all the peers there are.
 pub async fn dial(
     net: &Arc<NetState>,
     repo: RepoId,
     dialer: &mut Dialer,
     candidates: &[Candidate],
     progress: &Progress,
+    every: bool,
 ) {
     if mode() == Mode::Off || (net.discovery().is_none() && configured().is_empty()) {
         return;
     }
+    let limit = if every { SURVEY_SESSIONS } else { MAX_SESSIONS };
     let mut nodes: Vec<NodeId> = Vec::new();
     for node in candidates.iter().filter_map(|candidate| candidate.node) {
         if node != net.node_id && !nodes.contains(&node) && nodes.len() < MAX_NODES {
             nodes.push(node);
         }
     }
-    progress.say("relay", "no direct connection; looking for relays");
+    if dialer.connected.is_empty() {
+        progress.say("relay", "no direct connection; looking for relays");
+    } else {
+        progress.say("relay", "asking relays who else holds the repo");
+    }
     if !nodes.is_empty() {
         let found = routes(net, &nodes).await;
         progress.say("relay", format!("{} way(s) to known peers", found.len()));
-        dialer.dial_all(net, repo, found, MAX_SESSIONS).await;
+        dialer.dial_all(net, repo, found, limit).await;
     }
-    if dialer.connected.is_empty() {
+    if every || dialer.connected.is_empty() {
         let mut holders = topics::holders(net, repo, MAX_NODES).await;
         holders.retain(|node| !nodes.contains(node));
         if !holders.is_empty() {
@@ -72,7 +79,7 @@ pub async fn dial(
                 format!("relays name {} holder(s) of the repo", holders.len()),
             );
             let found = routes(net, &holders).await;
-            dialer.dial_all(net, repo, found, MAX_SESSIONS).await;
+            dialer.dial_all(net, repo, found, limit).await;
         }
     }
 }

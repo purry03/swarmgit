@@ -8,13 +8,18 @@ set -euo pipefail
 PORT_A=42561
 PORT_B=42562
 PORT_C=42563
+PORT_RELAY=42564
+PORT_D=42565
+PORT_E=42566
 WORK=$(mktemp -d)
 A_HOME=$WORK/a
 B_HOME=$WORK/b
 C_HOME=$WORK/c
 
+RELAY=
 cleanup() {
-    for home in "$A_HOME" "$B_HOME" "$C_HOME"; do
+    [[ -n $RELAY ]] && kill "$RELAY" 2>/dev/null
+    for home in "$A_HOME" "$B_HOME" "$C_HOME" "$WORK/d" "$WORK/e"; do
         SWARM_HOME=$home swarm daemon stop >/dev/null 2>&1 || true
     done
     rm -rf "$WORK" "$HELPER_DIR"
@@ -114,5 +119,28 @@ expect "$SEEN" 'description: first words'
 b swarm about "${NAMED:8:52}" --name mine >/dev/null
 expect "$(b swarm about "${NAMED:8:52}")" 'name: mine'
 expect "$(a swarm about "$REPO")" 'name: demo'
+
+echo "== inspect lists a seeder that only a relay knows, besides the one in the link"
+"$SWARM_BIN_DIR/swarm-relay" --listen "127.0.0.1:$PORT_RELAY" --no-network >"$WORK/relay.log" 2>&1 &
+RELAY=$!
+export SWARM_RELAY_ALLOW_PRIVATE=1 SWARM_RELAY_DISCOVERY=off
+via() { env SWARM_RELAYS=127.0.0.1:$PORT_RELAY "$@"; }
+d() { via env SWARM_HOME="$WORK/d" SWARM_LISTEN=127.0.0.1:$PORT_D SWARM_RELAY_MODE=always "$@"; }
+e() { via env SWARM_HOME="$WORK/e" SWARM_LISTEN=127.0.0.1:$PORT_E "$@"; }
+# D gets its copy from a file, so A has never heard of it.
+a swarm export "$LINK" -o "$WORK/repo.swarmbundle" >/dev/null
+d swarm import "$WORK/repo.swarmbundle" >/dev/null
+d swarm seed "swarm://$REPO" >/dev/null 2>&1 || true
+for _ in $(seq 100); do
+    d swarm status relays | grep -q ' registered' && break
+    sleep 0.2
+done
+D_NODE=$(d swarm status | awk '$1 == "Node" { print $2 }')
+[[ -n $D_NODE ]] || swarm_fail "no node ID for D"
+# It tells the relay which repos it holds on a 5 second cycle.
+sleep 7
+SEEN=$(e swarm inspect --json "swarm://$REPO?h=tcp:127.0.0.1:$PORT_A")
+expect "$SEEN" "$D_NODE"
+[[ $(grep -o '"nodeId"' <<<"$SEEN" | wc -l) -ge 2 ]] || swarm_fail "inspect listed one peer: $SEEN"
 
 echo "ABOUT PASS"

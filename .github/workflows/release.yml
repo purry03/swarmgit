@@ -1,7 +1,6 @@
 # Release: pushing a tag vX.Y.Z runs ci.yml, builds every package with
 # scripts/package.sh and publishes them as a GitHub release. The tag must match
-# the workspace version in Cargo.toml. It is then announced on Discord, which
-# needs the DISCORD_WEBHOOK repository secret.
+# the workspace version in Cargo.toml.
 #
 # Run by hand (Actions > release > Run workflow) it builds the packages and
 # keeps them as a workflow artifact, without publishing anything.
@@ -103,11 +102,3 @@ jobs:
           # v1.2.3-rc1 and the like are pre-releases.
           case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"
-
-  announce:
-    needs: publish
-    uses: ./.github/workflows/discord-releases.yml
-    with:
-      tag: ${{ github.ref_name }}
-    secrets:
-      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}

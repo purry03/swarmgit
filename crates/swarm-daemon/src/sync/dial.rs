@@ -20,6 +20,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const PEX_TIMEOUT: Duration = Duration::from_secs(5);
 /// DM-3: stop dialing once this many sessions carry the repo.
 pub const MAX_SESSIONS: usize = 4;
+/// Sessions an inspect may open to list who holds a repo.
+pub const SURVEY_SESSIONS: usize = 8;
 /// DM-2: dials in flight at once.
 const MAX_DIALS: usize = 8;
 /// 6.5: addresses taken from one `Peers` reply.
