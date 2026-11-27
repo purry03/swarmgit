@@ -17,13 +17,22 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer commit makes the older run pointless. Release tags run to the end.
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Debug symbols only slow the build and fill the cache.
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   test:
+    name: ${{ matrix.part }}
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [checks, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -38,6 +47,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target/ci"
+          # Otherwise a failing run leaves nothing for the next one.
+          cache-on-failure: true
       - name: Let test bridges bypass the host firewall
         # Docker on the runner sends bridged packets through its FORWARD chain,
         # which drops them. punch.sh builds its own bridge.
@@ -47,8 +58,10 @@ jobs:
           sudo env "PATH=$PATH" HOME=/root CI=true \
             "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
             "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" \
+            CARGO_TERM_COLOR="$CARGO_TERM_COLOR" CARGO_INCREMENTAL="$CARGO_INCREMENTAL" \
+            CARGO_PROFILE_DEV_DEBUG="$CARGO_PROFILE_DEV_DEBUG" \
             SWARM_CI_INSIDE=1 HOST_UID="$(id -u)" HOST_GID="$(id -g)" \
-            scripts/ci.sh
+            scripts/ci.sh ${{ matrix.part }}
       - name: Give caches back to the runner user
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" "${CARGO_HOME:-$HOME/.cargo}" target || true
