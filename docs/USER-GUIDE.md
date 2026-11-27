@@ -39,15 +39,15 @@ You need `git`. Packages are at `https://swarmgit.com/downloads/`.
 
 | Platform | File (x86_64) | File (ARM64) |
 | --- | --- | --- |
-| Debian, Ubuntu | `swarmgit_0.2.0_amd64.deb` | `swarmgit_0.2.0_arm64.deb` |
-| Fedora, RHEL | `swarmgit-0.2.0-1.x86_64.rpm` | `swarmgit-0.2.0-1.aarch64.rpm` |
-| Other Linux | `swarmgit-0.2.0-linux-x86_64.tar.gz` | `swarmgit-0.2.0-linux-aarch64.tar.gz` |
-| macOS | `swarmgit-0.2.0-macos-x86_64.tar.gz` | `swarmgit-0.2.0-macos-aarch64.tar.gz` |
+| Debian, Ubuntu | `swarm_0.2.0_amd64.deb` | `swarm_0.2.0_arm64.deb` |
+| Fedora, RHEL | `swarm-0.2.0-1.x86_64.rpm` | `swarm-0.2.0-1.aarch64.rpm` |
+| Other Linux | `swarm-0.2.0-linux-x86_64.tar.gz` | `swarm-0.2.0-linux-aarch64.tar.gz` |
+| macOS | `swarm-0.2.0-macos-x86_64.tar.gz` | `swarm-0.2.0-macos-aarch64.tar.gz` |
 
 ### Check the download
 
 ```bash
-curl -O https://swarmgit.com/downloads/swarmgit_0.2.0_amd64.deb
+curl -O https://swarmgit.com/downloads/swarm_0.2.0_amd64.deb
 curl -O https://swarmgit.com/downloads/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
 ```
@@ -58,20 +58,20 @@ On macOS use `shasum -a 256 <file>` and compare it with the line in
 ### Debian and Ubuntu
 
 ```bash
-sudo apt install ./swarmgit_0.2.0_amd64.deb
+sudo apt install ./swarm_0.2.0_amd64.deb
 ```
 
 ### Fedora and RHEL
 
 ```bash
-sudo dnf install ./swarmgit-0.2.0-1.x86_64.rpm
+sudo dnf install ./swarm-0.2.0-1.x86_64.rpm
 ```
 
 ### Archive (any Linux, or macOS)
 
 ```bash
-tar xzf swarmgit-0.2.0-macos-aarch64.tar.gz
-cd swarmgit-0.2.0-macos-aarch64
+tar xzf swarm-0.2.0-macos-aarch64.tar.gz
+cd swarm-0.2.0-macos-aarch64
 sudo cp -R bin/swarm bin/git-remote-swarm bin/swarm-relay /usr/local/bin/
 ```
 

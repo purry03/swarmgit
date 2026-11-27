@@ -4,6 +4,8 @@ All notable changes to Swarmgit are recorded here.
 
 ## Unreleased
 
+- Release files for the client are now named `swarm_…` and `swarm-…` instead of
+  `swarmgit…`. The installed package is still called `swarmgit`.
 - `swarm inspect` keeps looking after the first peer answers, so it lists more of
   the peers that hold a repository. This can take up to 10 seconds longer.
 

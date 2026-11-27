@@ -12,7 +12,8 @@
 #   VERSION=0.2.0 scripts/package.sh    # override the Cargo.toml version
 #
 # Two packages come out of each .deb/.rpm build: `swarmgit` (the swarm CLI and
-# git remote helper) and `swarm-relay` (the relay server, with a systemd unit
+# git remote helper; its files are named swarm_* and swarm-*, but Debian and
+# Ubuntu ship another package called `swarm`, so the package keeps this name) and `swarm-relay` (the relay server, with a systemd unit
 # and /etc/default/swarm-relay). The .tar.gz holds both binaries.
 #
 # Format flags (--deb --rpm --tar) and platform flags (--linux --macos) narrow
@@ -438,7 +439,7 @@ Description: peer-to-peer git over an encrypted, post-quantum transport
 EOF
 
         dpkg-deb --build --root-owner-group "$stage" \
-            "$OUT_DIR/swarmgit_${VERSION}_${DEB_ARCH}.deb"
+            "$OUT_DIR/swarm_${VERSION}_${DEB_ARCH}.deb"
     }
 
     package_rpm() {
@@ -514,11 +515,11 @@ EOF
             exit 1
         }
         install -m 0644 "$built" \
-            "$OUT_DIR/swarmgit-${RPM_VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
+            "$OUT_DIR/swarm-${RPM_VERSION}-${RELEASE}.${RPM_ARCH}.rpm"
     }
 
     package_tar() {
-        local base=swarmgit-$VERSION-$OS-$ARCH
+        local base=swarm-$VERSION-$OS-$ARCH
         local stage=$WORK/tar-$OS-$ARCH/$base
         mkdir -p "$stage/bin"
         install -m 0755 "$BIN" "$stage/bin/swarm"
@@ -611,11 +612,11 @@ docker run --rm -i \
     cd "$OUT_DIR"
     shopt -s nullglob
     files=(
-        "swarmgit_${VERSION}_"*.deb
+        "swarm_${VERSION}_"*.deb
         "swarm-relay_${VERSION}_"*.deb
-        "swarmgit-${RPM_VERSION}-${RELEASE}."*.rpm
+        "swarm-${RPM_VERSION}-${RELEASE}."*.rpm
         "swarm-relay-${RPM_VERSION}-${RELEASE}."*.rpm
-        "swarmgit-${VERSION}-"{linux,macos}-*.tar.gz
+        "swarm-${VERSION}-"{linux,macos}-*.tar.gz
     )
     ((${#files[@]})) || exit 0
     sha256sum -- "${files[@]}" >SHA256SUMS
