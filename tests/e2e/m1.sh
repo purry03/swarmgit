@@ -20,6 +20,11 @@ cd $SRC && git push -q swarm main                                  # no change
 swarm status --json | jq -e '.repos[0].seq == 2'                   # still 2, publish was a no-op
 # ----- end spec 11.2 acceptance block -----
 
+echo "== status lists the project folders under each repo"
+swarm status --json | jq -e --arg src "$SRC" '.repos[0].folders | index($src) != null' >/dev/null ||
+    swarm_fail "status --json does not list the folder swarm init ran in"
+swarm status | grep -qF "↳ $SRC" || swarm_fail "status does not show the folder"
+
 cd "$SRC"
 REPO_ID=${ID#swarm://}
 REPO_ID=${REPO_ID%%\?*}

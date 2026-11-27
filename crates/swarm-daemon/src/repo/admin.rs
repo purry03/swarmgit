@@ -61,6 +61,34 @@ pub(crate) fn deleted_workdirs(paths: &[String]) -> Option<Vec<&str>> {
     })
 }
 
+/// The project folders that are still there, to show in `status`.
+fn project_folders(paths: &[String]) -> Vec<String> {
+    let mut folders: Vec<String> = paths
+        .iter()
+        .map(|path| project_folder(path))
+        .filter(|folder| !matches!(std::path::Path::new(folder).try_exists(), Ok(false)))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    folders
+}
+
+/// The folder a person works in, for a git directory: the parent of `.git`,
+/// the checkout of a linked worktree, or a bare repository itself.
+fn project_folder(git_dir: &str) -> String {
+    let path = std::path::Path::new(git_dir);
+    let linked = path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .is_some_and(|name| name == "worktrees");
+    // A linked worktree's git directory names the `.git` file in its checkout.
+    let checkout = linked
+        .then(|| std::fs::read_to_string(path.join("gitdir")).ok())
+        .flatten();
+    let dir = checkout.as_deref().map_or(git_dir, str::trim_end);
+    dir.strip_suffix("/.git").unwrap_or(dir).to_string()
+}
+
 fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, IpcError> {
     let store = RepoStore::new(state.home.clone(), row.id);
     let accepted = store.load_state()?;
@@ -101,6 +129,7 @@ fn summary(state: &DaemonState, row: &swarm_store::RepoRow) -> Result<Value, Ipc
         "checking": state.net().is_some_and(|net| net.is_checking(row.id)),
         "on_disk": store.exists(),
         "error": (!store.exists()).then_some("seeding failed: files missing"),
+        "folders": project_folders(&workdirs),
         "deleted_folders": deleted_workdirs(&workdirs),
         "seeding": seeding,
         "object_format": row.object_format,
@@ -422,4 +451,34 @@ pub async fn gc(state: &DaemonState, args: &Value) -> Result<Value, IpcError> {
         ));
     }
     Ok(json!({ "gc": true }))
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::*;
+
+    #[test]
+    fn git_directories_are_shown_as_the_folders_people_work_in() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_str().unwrap();
+        let linked = format!("{root}/main/.git/worktrees/side");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::create_dir_all(format!("{root}/side")).unwrap();
+        std::fs::create_dir_all(format!("{root}/bare.git")).unwrap();
+        std::fs::write(format!("{linked}/gitdir"), format!("{root}/side/.git\n")).unwrap();
+        let recorded = [
+            format!("{root}/main/.git"),
+            linked,
+            format!("{root}/bare.git"),
+            format!("{root}/gone/.git"),
+        ];
+        assert_eq!(
+            project_folders(&recorded),
+            [
+                format!("{root}/bare.git"),
+                format!("{root}/main"),
+                format!("{root}/side"),
+            ]
+        );
+    }
 }

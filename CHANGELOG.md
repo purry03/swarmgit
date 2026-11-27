@@ -9,6 +9,8 @@ All notable changes to Swarmgit are recorded here.
 - `swarm status repos`, `swarm status relays` and `swarm status peers`.
   `swarm status <repo>` shows one repo in detail.
 - `swarm daemon start` and `swarm daemon restart`.
+- `swarm status` lists the local project folders under each repo (`folders` in
+  `--json`).
 - `swarm inspect <link>` reads and verifies a repo's signed metadata without
   downloading Git objects (`--json`, `--progress`).
 - `swarm discover-relays` lists the public relays found through the DHT and

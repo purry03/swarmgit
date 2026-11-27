@@ -9,6 +9,10 @@ const GREEN: &str = "32";
 const YELLOW: &str = "33";
 const RED: &str = "31";
 const BOLD: &str = "1";
+const DIM: &str = "2";
+
+/// Folders listed under a repo in the table; `swarm status <repo>` lists all.
+const FOLDERS_SHOWN: usize = 3;
 
 #[derive(Clone, Copy)]
 pub(super) struct Style {
@@ -80,7 +84,38 @@ fn short(id: &str) -> String {
     }
 }
 
-fn table(out: &mut String, style: Style, indent: &str, header: &[&str], rows: &[Vec<Cell>]) {
+/// A path as a person would type it, with the home directory as `~`.
+fn tilde(path: &str, home: Option<&str>) -> String {
+    let rest = home
+        .map(|home| home.trim_end_matches('/'))
+        .filter(|home| !home.is_empty())
+        .and_then(|home| path.strip_prefix(home))
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'));
+    match rest {
+        Some(rest) => clean(&format!("~{rest}")),
+        None => clean(path),
+    }
+}
+
+fn folders(repo: &Value) -> Vec<String> {
+    let home = std::env::var("HOME").ok();
+    list(repo, "folders")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|path| tilde(path, home.as_deref()))
+        .collect()
+}
+
+/// Write the header and rows aligned. `under` holds, for each row, lines to
+/// put below it; it may be shorter than `rows`.
+fn table(
+    out: &mut String,
+    style: Style,
+    indent: &str,
+    header: &[&str],
+    rows: &[Vec<Cell>],
+    under: &[Vec<String>],
+) {
     let mut widths: Vec<usize> = header.iter().map(|name| name.len()).collect();
     for row in rows {
         for (width, (value, _)) in widths.iter_mut().zip(row) {
@@ -88,7 +123,7 @@ fn table(out: &mut String, style: Style, indent: &str, header: &[&str], rows: &[
         }
     }
     let header: Vec<Cell> = header.iter().map(|name| (name.to_string(), BOLD)).collect();
-    for row in std::iter::once(&header).chain(rows) {
+    for (index, row) in std::iter::once(&header).chain(rows).enumerate() {
         let mut line = indent.to_string();
         for (column, ((value, code), width)) in row.iter().zip(&widths).enumerate() {
             line.push_str(&style.paint(code, value));
@@ -99,6 +134,11 @@ fn table(out: &mut String, style: Style, indent: &str, header: &[&str], rows: &[
             }
         }
         let _ = writeln!(out, "{}", line.trim_end());
+        // Row 0 is the header.
+        let notes = index.checked_sub(1).and_then(|row| under.get(row));
+        for note in notes.into_iter().flatten() {
+            let _ = writeln!(out, "{indent}  {note}");
+        }
     }
 }
 
@@ -169,8 +209,9 @@ fn problems(repo: &Value) -> Vec<String> {
     if let Some(error) = text(repo, "error") {
         lines.push(clean(error));
     }
+    let home = std::env::var("HOME").ok();
     for folder in list(repo, "deleted_folders") {
-        let folder = clean(folder.as_str().unwrap_or("?"));
+        let folder = tilde(folder.as_str().unwrap_or("?"), home.as_deref());
         lines.push(format!("project folder deleted: {folder}"));
     }
     for name in list(repo, "conflicts") {
@@ -209,13 +250,28 @@ pub(super) fn repos(out: &mut String, style: Style, status: &Value, indent: &str
     let header = [
         "REPO", "SEQ", "REFS", "SEEDING", "SEEDERS", "CHECKED", "STATE",
     ];
-    table(out, style, indent, &header, &rows);
-    for repo in repos {
-        let id = short(text(repo, "repo").unwrap_or("?"));
-        for problem in problems(repo) {
-            let _ = writeln!(out, "{indent}! {id} {problem}");
-        }
+    let under: Vec<Vec<String>> = repos.iter().map(|repo| notes(style, repo)).collect();
+    table(out, style, indent, &header, &rows, &under);
+}
+
+/// What goes below a repo's row: its folders, then its problems.
+fn notes(style: Style, repo: &Value) -> Vec<String> {
+    let folders = folders(repo);
+    let more = folders.len().saturating_sub(FOLDERS_SHOWN);
+    let mut lines: Vec<String> = folders
+        .iter()
+        .take(FOLDERS_SHOWN)
+        .map(|folder| style.paint(DIM, &format!("↳ {folder}")))
+        .collect();
+    if more > 0 {
+        lines.push(style.paint(DIM, &format!("↳ and {more} more")));
     }
+    lines.extend(
+        problems(repo)
+            .into_iter()
+            .map(|problem| format!("! {problem}")),
+    );
+    lines
 }
 
 pub(super) fn repo_detail(out: &mut String, style: Style, status: &Value) {
@@ -223,6 +279,9 @@ pub(super) fn repo_detail(out: &mut String, style: Style, status: &Value) {
         field(out, "Repo", text(repo, "repo").unwrap_or("?"));
         field(out, "Link", text(repo, "link").unwrap_or("?"));
         field(out, "Root", text(repo, "root").unwrap_or("?"));
+        for (index, folder) in folders(repo).iter().enumerate() {
+            field(out, if index == 0 { "Folders" } else { "" }, folder);
+        }
         field(out, "Format", text(repo, "object_format").unwrap_or("?"));
         field(out, "Seq", &number(repo, "seq").unwrap_or(0).to_string());
         field(out, "Refs", &number(repo, "refs").unwrap_or(0).to_string());
@@ -275,7 +334,14 @@ pub(super) fn relays(out: &mut String, style: Style, status: &Value, indent: &st
             ]
         })
         .collect();
-    table(out, style, indent, &["RELAY", "STATE", "DETAIL"], &rows);
+    table(
+        out,
+        style,
+        indent,
+        &["RELAY", "STATE", "DETAIL"],
+        &rows,
+        &[],
+    );
 }
 
 /// The relay's name, followed by the IP it resolved to when the name is not
@@ -334,6 +400,7 @@ pub(super) fn peers(out: &mut String, style: Style, result: &Value) {
             "  ",
             &["ADDRESS", "NODE", "STATE", "LAST OK"],
             &rows,
+            &[],
         );
     }
 }
@@ -383,9 +450,37 @@ mod tests {
         }]});
         repos(&mut out, PLAIN, &status, "");
         assert!(out.contains("1 (only you)  1m ago   conflict\n"), "{out}");
-        assert!(
-            out.ends_with("! abcdefghijkl… conflict refs/heads/main\n"),
-            "{out}"
+        assert!(out.ends_with("\n  ! conflict refs/heads/main\n"), "{out}");
+    }
+
+    #[test]
+    fn folders_sit_under_their_repo_and_are_capped() {
+        let mut out = String::new();
+        let status = json!({ "repos": [
+            { "repo": "first", "folders": ["/x/a", "/x/b", "/x/c", "/x/d", "/x/e"] },
+            { "repo": "second", "folders": ["/x/\u{1b}[2J"] },
+            { "repo": "third" },
+        ]});
+        repos(&mut out, PLAIN, &status, "  ");
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[1].starts_with("  first "), "{out}");
+        assert_eq!(
+            lines[2..6],
+            ["    ↳ /x/a", "    ↳ /x/b", "    ↳ /x/c", "    ↳ and 2 more"]
         );
+        assert!(lines[6].starts_with("  second "), "{out}");
+        assert_eq!(lines[7], "    ↳ /x/?[2J");
+        assert!(lines[8].starts_with("  third "), "{out}");
+        assert_eq!(lines.len(), 9);
+    }
+
+    #[test]
+    fn only_paths_inside_home_are_shortened() {
+        let home = Some("/home/ann");
+        assert_eq!(tilde("/home/ann/code", home), "~/code");
+        assert_eq!(tilde("/home/ann", home), "~");
+        assert_eq!(tilde("/home/annex/code", home), "/home/annex/code");
+        assert_eq!(tilde("/srv/code", None), "/srv/code");
+        assert_eq!(tilde("/srv/code", Some("/")), "/srv/code");
     }
 }

@@ -548,6 +548,9 @@ also creates a repo you can push to.
 **Reading `swarm status`** — it shows the daemon, a table of repos and the
 relays, where `name:port (IP)` is a relay with a domain name.
 `swarm status <repo>` shows one repo with its link and root key.
+Under each repo, `↳` lines name the folders on this machine that use it (three
+at most; `swarm status <repo>` lists them all, and `--json` has them as
+`folders`).
 `swarm status peers` lists, for each repo, the addresses the daemon remembers:
 `connected` has an open session now, `failing (n)` failed the last `n` tries,
 and `idle` is neither. In the repo table, `SEEDING` is yes when this machine has the repo
