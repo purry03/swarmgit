@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 swarm-core = { path = "../crates/swarm-core" }
 swarm-disc = { path = "../crates/swarm-disc" }
+swarm-net = { path = "../crates/swarm-net" }
 
 [profile.release]
 debug = true
@@ -36,6 +37,12 @@ doc = false
 [[bin]]
 name = "lan_packet"
 path = "fuzz_targets/lan_packet.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "message_decode"
+path = "fuzz_targets/message_decode.rs"
 test = false
 doc = false
 

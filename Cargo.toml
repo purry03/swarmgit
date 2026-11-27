@@ -24,6 +24,7 @@ chacha20poly1305 = { version = "0.10", features = ["std"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+clap_mangen = "0.2"
 data-encoding = "2"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 fs2 = "0.4"
@@ -42,9 +43,10 @@ slh-dsa = { version = "0.2.0-rc.5", features = ["alloc"] }
 subtle = "2"
 tempfile = "3"
 thiserror = "2"
+tokio-socks = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "process", "io-util", "io-std", "time", "signal", "sync", "macros"] }
 tracing = "0.1"
-ureq = "2"
+ureq = { version = "2", features = ["socks-proxy"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1"
 

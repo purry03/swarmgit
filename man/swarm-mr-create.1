@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr-create 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr\-create \- Propose a branch; run it again to add your new commits
+.SH SYNOPSIS
+\fBswarm mr create\fR [\fB\-\-base\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-offline\fR] [\fB\-\-title\fR] [\fB\-m\fR|\fB\-\-message\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIBRANCH\fR] 
+.SH DESCRIPTION
+Propose a branch; run it again to add your new commits
+.SH OPTIONS
+.TP
+\fB\-\-base\fR \fI<BRANCH>\fR
+Branch to merge into (default: the repo\*(Aqs default branch)
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-\-title\fR \fI<TITLE>\fR
+Title (default: taken from the commits)
+.TP
+\fB\-m\fR, \fB\-\-message\fR \fI<MESSAGE>\fR
+Description
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIBRANCH\fR]
+Branch to propose (default: the current one)

@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mirror-export 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mirror\-export \- Write DIR/<repo\-id>/repo.swarmbundle; serve DIR with any web server
+.SH SYNOPSIS
+\fBswarm mirror export\fR [\fB\-h\fR|\fB\-\-help\fR] <\fILINK\fR> <\fIDIR\fR> 
+.SH DESCRIPTION
+Write DIR/<repo\-id>/repo.swarmbundle; serve DIR with any web server
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fILINK\fR>
+A repo ID or link
+.TP
+<\fIDIR\fR>
+Directory to write into

@@ -49,7 +49,100 @@ _arguments "${_arguments_options[@]}" : \
 '--json[Print one JSON object on stdout]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'::repo:_default' \
+'::repo -- Show one repo in detail:_default' \
+":: :_swarm__subcmd__status_commands" \
+"*::: :->status" \
+&& ret=0
+
+    case $state in
+    (status)
+        words=($line[2] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-status-command-$line[2]:"
+        case $line[2] in
+            (repos)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::repo -- Show one repo in detail:_default' \
+&& ret=0
+;;
+(relays)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::repo -- Only this repo:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__status__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-status-help-command-$line[1]:"
+        case $line[1] in
+            (repos)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(relays)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(inspect)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print one JSON object on stdout]' \
+'--progress[Stream lookup progress as JSON lines]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':link -- A `swarm\://` link, optionally with hints:_default' \
+&& ret=0
+;;
+(about)
+_arguments "${_arguments_options[@]}" : \
+'--name=[New name, at most 64 bytes. "" removes it]:NAME:_default' \
+'--description=[New one-line description, at most 512 bytes. "" removes it]:DESCRIPTION:_default' \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo -- A repo ID or link:_default' \
+&& ret=0
+;;
+(discover-relays)
+_arguments "${_arguments_options[@]}" : \
+'--json[Print a JSON object containing protocol-verified public relays]' \
+'-h[Print help]' \
+'--help[Print help]' \
 && ret=0
 ;;
 (seed)
@@ -75,6 +168,215 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 ':link -- A repo ID or link:_default' \
 && ret=0
+;;
+(purge)
+_arguments "${_arguments_options[@]}" : \
+'--yes[Do not ask for confirmation. The signing key is kept]' \
+'--delete-key[Also delete the signing key. It cannot be recreated]' \
+'--json[Print one JSON object on stdout]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':repo -- A repo ID or link:_default' \
+&& ret=0
+;;
+(mr)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_swarm__subcmd__mr_commands" \
+"*::: :->mr" \
+&& ret=0
+
+    case $state in
+    (mr)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-mr-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--all[Include merged and closed ones]' \
+'--json[Print one JSON object on stdout]' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--json[Print one JSON object on stdout]' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::mr -- Its branch or ID (default\: the current branch):_default' \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+'--base=[Branch to merge into (default\: the repo'\''s default branch)]:BRANCH:_default' \
+'--title=[Title (default\: taken from the commits)]:TITLE:_default' \
+'-m+[Description]:MESSAGE:_default' \
+'--message=[Description]:MESSAGE:_default' \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch -- Branch to propose (default\: the current one):_default' \
+&& ret=0
+;;
+(comment)
+_arguments "${_arguments_options[@]}" : \
+'-m+[The comment; without it your git editor opens]:MESSAGE:_default' \
+'--message=[The comment; without it your git editor opens]:MESSAGE:_default' \
+'--file=[File the comment is about]:PATH:_default' \
+'--line=[Line of that file]:LINE:_default' \
+'--reply-to=[Comment being answered, by the ID shown before it]:COMMENT:_default' \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::mr -- Its branch or ID (default\: the current branch):_default' \
+&& ret=0
+;;
+(review)
+_arguments "${_arguments_options[@]}" : \
+'-m+[What you think]:MESSAGE:_default' \
+'--message=[What you think]:MESSAGE:_default' \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--approve[Approve the commits as they are now]' \
+'--request-changes[Ask for changes; say which with -m]' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::mr -- Its branch or ID (default\: the current branch):_default' \
+&& ret=0
+;;
+(checkout)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':mr -- Its branch or ID:_default' \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::mr -- Its branch or ID (default\: the current branch):_default' \
+&& ret=0
+;;
+(merge)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--no-push[Make the merge commit but do not push it]' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':mr -- Its branch or ID:_default' \
+&& ret=0
+;;
+(close)
+_arguments "${_arguments_options[@]}" : \
+'-m+[Why]:MESSAGE:_default' \
+'--message=[Why]:MESSAGE:_default' \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':mr -- Its branch or ID:_default' \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+'-R+[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--repo=[A repo ID or link; by default the swarm remote of this clone]:REPO:_default' \
+'--offline[Use what is already here instead of syncing first]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':mr -- Its branch or ID:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__mr__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-mr-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(comment)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(review)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(checkout)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(merge)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(close)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 ;;
 (fork)
 _arguments "${_arguments_options[@]}" : \
@@ -340,10 +642,35 @@ _arguments "${_arguments_options[@]}" : \
 ':shell -- The shell to generate for:(bash elvish fish powershell zsh)' \
 && ret=0
 ;;
+(relay)
+_arguments "${_arguments_options[@]}" : \
+'--listen=[Address to listen on]:LISTEN:_default' \
+'*--name=[Name clients dial this relay by, as host\:port. Repeatable. A listener'\''s proof is bound to it. Without any, proofs are not bound to a name]:NAMES:_default' \
+'*--allow-node=[Let only this node register. Repeatable. Keeps the relay out of the relay network]:NODE_ID:_default' \
+'--password-file=[Require the secret in this file to register or dial. Clients send it only to an address that includes the relay'\''s key, so this needs --key-file. Keeps the relay out of the relay network]:FILE:_files' \
+'--key-file=[Keep the relay'\''s key in this file, created on first use, so that \`host\:port#key\` addresses keep working across restarts]:FILE:_files' \
+'--metrics=[Serve counters over HTTP on this address (off by default)]:ADDR:_default' \
+'--max-listeners=[Most registered listeners]:MAX_LISTENERS:_default' \
+'--max-splices=[Most simultaneous splices]:MAX_SPLICES:_default' \
+'--listeners-per-ip=[Most nodes registered from one address]:LISTENERS_PER_IP:_default' \
+'--splices-per-ip=[Most splices one dialing address may have open]:SPLICES_PER_IP:_default' \
+'--connects-per-minute=[Most connect attempts from one address in a minute]:CONNECTS_PER_MINUTE:_default' \
+'--splice-kib-per-sec=[Rate of one splice in KiB per second, 0 for no limit]:SPLICE_KIB_PER_SEC:_default' \
+'--node-daily-mib=[Most bytes carried for one node in a day, in MiB]:NODE_DAILY_MIB:_default' \
+'--idle-secs=[Close a splice after this many idle seconds]:IDLE_SECS:_default' \
+'--round-secs=[Seconds between relay network rounds (gossip)]:ROUND_SECS:_default' \
+'(--public)--no-network[Stay out of the relay network\: no DHT announce and no gossip]' \
+'--public[This relay is reachable from the internet\: announce it without first asking another relay to dial back]' \
+'--allow-private[Accept relays on loopback and private addresses, for a closed network]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (daemon)
 _arguments "${_arguments_options[@]}" : \
-'--foreground[Stay in the foreground]' \
+'--foreground[Run the daemon in this terminal (for service managers)]' \
 '--detach[Run as an already-detached process (used by autostart)]' \
+'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ":: :_swarm__subcmd__daemon_commands" \
@@ -356,8 +683,23 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:swarm-daemon-command-$line[1]:"
         case $line[1] in
-            (stop)
+            (start)
 _arguments "${_arguments_options[@]}" : \
+'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(restart)
+_arguments "${_arguments_options[@]}" : \
+'--experimental-udp[Try direct UDP paths between relayed peers (experimental)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
@@ -374,7 +716,15 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:swarm-daemon-help-command-$line[1]:"
         case $line[1] in
-            (stop)
+            (start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(restart)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -412,6 +762,42 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (status)
 _arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help__subcmd__status_commands" \
+"*::: :->status" \
+&& ret=0
+
+    case $state in
+    (status)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-status-command-$line[1]:"
+        case $line[1] in
+            (repos)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(relays)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(inspect)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(about)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(discover-relays)
+_arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (seed)
@@ -425,6 +811,66 @@ _arguments "${_arguments_options[@]}" : \
 (gc)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
+;;
+(purge)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mr)
+_arguments "${_arguments_options[@]}" : \
+":: :_swarm__subcmd__help__subcmd__mr_commands" \
+"*::: :->mr" \
+&& ret=0
+
+    case $state in
+    (mr)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:swarm-help-mr-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(comment)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(review)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(checkout)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(merge)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(close)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
 ;;
 (fork)
 _arguments "${_arguments_options[@]}" : \
@@ -530,6 +976,10 @@ esac
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(relay)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (daemon)
 _arguments "${_arguments_options[@]}" : \
 ":: :_swarm__subcmd__help__subcmd__daemon_commands" \
@@ -542,7 +992,15 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:swarm-help-daemon-command-$line[1]:"
         case $line[1] in
-            (stop)
+            (start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(restart)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -568,10 +1026,15 @@ _swarm_commands() {
     local commands; commands=(
 'init:Create a repo key and publish the first manifest' \
 'link:Print the link for a repo' \
-'status:Show repos, sequence numbers and conflicts' \
+'status:Show the daemon, repos, relays and peers' \
+'inspect:Show a repo'\''s name, branches and forks without downloading Git objects' \
+'about:Show or set a repo'\''s name and description (root or maintainer key)' \
+'discover-relays:Find public relay servers through the Mainline DHT and relay gossip' \
 'seed:Sync a repo and keep serving it' \
 'unseed:Stop serving a repo but keep its store' \
 'gc:Repack a repo'\''s store and drop unreachable objects, when idle (ST-7)' \
+'purge:Delete a repo'\''s store and manifests, and stop serving it' \
+'mr:Merge requests\: propose changes, discuss, review and merge them' \
 'fork:Create an independent repo from another one' \
 'export:Write a repo and its signed state to a bundle file for offline transfer' \
 'mirror:Publish a repo for static mirrors (plain file hosting)' \
@@ -580,10 +1043,16 @@ _swarm_commands() {
 'accept:Settle a ref conflict here by taking one signer'\''s value' \
 'key:Key management' \
 'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
-'daemon:Run, start or stop the daemon' \
+'relay:Run a relay server for peers that cannot accept connections' \
+'daemon:Start, stop or restart the background daemon' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'swarm commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__about_commands] )) ||
+_swarm__subcmd__about_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm about commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__accept_commands] )) ||
 _swarm__subcmd__accept_commands() {
@@ -598,7 +1067,9 @@ _swarm__subcmd__completions_commands() {
 (( $+functions[_swarm__subcmd__daemon_commands] )) ||
 _swarm__subcmd__daemon_commands() {
     local commands; commands=(
+'start:Start the daemon in the background' \
 'stop:Stop the running daemon' \
+'restart:Stop the daemon if it is running, then start it' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'swarm daemon commands' commands "$@"
@@ -606,7 +1077,9 @@ _swarm__subcmd__daemon_commands() {
 (( $+functions[_swarm__subcmd__daemon__subcmd__help_commands] )) ||
 _swarm__subcmd__daemon__subcmd__help_commands() {
     local commands; commands=(
+'start:Start the daemon in the background' \
 'stop:Stop the running daemon' \
+'restart:Stop the daemon if it is running, then start it' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'swarm daemon help commands' commands "$@"
@@ -616,15 +1089,40 @@ _swarm__subcmd__daemon__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'swarm daemon help help commands' commands "$@"
 }
+(( $+functions[_swarm__subcmd__daemon__subcmd__help__subcmd__restart_commands] )) ||
+_swarm__subcmd__daemon__subcmd__help__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon help restart commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon__subcmd__help__subcmd__start_commands] )) ||
+_swarm__subcmd__daemon__subcmd__help__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon help start commands' commands "$@"
+}
 (( $+functions[_swarm__subcmd__daemon__subcmd__help__subcmd__stop_commands] )) ||
 _swarm__subcmd__daemon__subcmd__help__subcmd__stop_commands() {
     local commands; commands=()
     _describe -t commands 'swarm daemon help stop commands' commands "$@"
 }
+(( $+functions[_swarm__subcmd__daemon__subcmd__restart_commands] )) ||
+_swarm__subcmd__daemon__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon restart commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__daemon__subcmd__start_commands] )) ||
+_swarm__subcmd__daemon__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm daemon start commands' commands "$@"
+}
 (( $+functions[_swarm__subcmd__daemon__subcmd__stop_commands] )) ||
 _swarm__subcmd__daemon__subcmd__stop_commands() {
     local commands; commands=()
     _describe -t commands 'swarm daemon stop commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__discover-relays_commands] )) ||
+_swarm__subcmd__discover-relays_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm discover-relays commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__export_commands] )) ||
 _swarm__subcmd__export_commands() {
@@ -646,10 +1144,15 @@ _swarm__subcmd__help_commands() {
     local commands; commands=(
 'init:Create a repo key and publish the first manifest' \
 'link:Print the link for a repo' \
-'status:Show repos, sequence numbers and conflicts' \
+'status:Show the daemon, repos, relays and peers' \
+'inspect:Show a repo'\''s name, branches and forks without downloading Git objects' \
+'about:Show or set a repo'\''s name and description (root or maintainer key)' \
+'discover-relays:Find public relay servers through the Mainline DHT and relay gossip' \
 'seed:Sync a repo and keep serving it' \
 'unseed:Stop serving a repo but keep its store' \
 'gc:Repack a repo'\''s store and drop unreachable objects, when idle (ST-7)' \
+'purge:Delete a repo'\''s store and manifests, and stop serving it' \
+'mr:Merge requests\: propose changes, discuss, review and merge them' \
 'fork:Create an independent repo from another one' \
 'export:Write a repo and its signed state to a bundle file for offline transfer' \
 'mirror:Publish a repo for static mirrors (plain file hosting)' \
@@ -658,10 +1161,16 @@ _swarm__subcmd__help_commands() {
 'accept:Settle a ref conflict here by taking one signer'\''s value' \
 'key:Key management' \
 'completions:Print a shell completion script (bash, zsh, fish, elvish, powershell)' \
-'daemon:Run, start or stop the daemon' \
+'relay:Run a relay server for peers that cannot accept connections' \
+'daemon:Start, stop or restart the background daemon' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'swarm help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__about_commands] )) ||
+_swarm__subcmd__help__subcmd__about_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help about commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__help__subcmd__accept_commands] )) ||
 _swarm__subcmd__help__subcmd__accept_commands() {
@@ -676,14 +1185,31 @@ _swarm__subcmd__help__subcmd__completions_commands() {
 (( $+functions[_swarm__subcmd__help__subcmd__daemon_commands] )) ||
 _swarm__subcmd__help__subcmd__daemon_commands() {
     local commands; commands=(
+'start:Start the daemon in the background' \
 'stop:Stop the running daemon' \
+'restart:Stop the daemon if it is running, then start it' \
     )
     _describe -t commands 'swarm help daemon commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__daemon__subcmd__restart_commands] )) ||
+_swarm__subcmd__help__subcmd__daemon__subcmd__restart_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help daemon restart commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__daemon__subcmd__start_commands] )) ||
+_swarm__subcmd__help__subcmd__daemon__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help daemon start commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__help__subcmd__daemon__subcmd__stop_commands] )) ||
 _swarm__subcmd__help__subcmd__daemon__subcmd__stop_commands() {
     local commands; commands=()
     _describe -t commands 'swarm help daemon stop commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__discover-relays_commands] )) ||
+_swarm__subcmd__help__subcmd__discover-relays_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help discover-relays commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__help__subcmd__export_commands] )) ||
 _swarm__subcmd__help__subcmd__export_commands() {
@@ -714,6 +1240,11 @@ _swarm__subcmd__help__subcmd__import_commands() {
 _swarm__subcmd__help__subcmd__init_commands() {
     local commands; commands=()
     _describe -t commands 'swarm help init commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__inspect_commands] )) ||
+_swarm__subcmd__help__subcmd__inspect_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help inspect commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__help__subcmd__key_commands] )) ||
 _swarm__subcmd__help__subcmd__key_commands() {
@@ -792,6 +1323,82 @@ _swarm__subcmd__help__subcmd__mirror__subcmd__export_commands() {
     local commands; commands=()
     _describe -t commands 'swarm help mirror export commands' commands "$@"
 }
+(( $+functions[_swarm__subcmd__help__subcmd__mr_commands] )) ||
+_swarm__subcmd__help__subcmd__mr_commands() {
+    local commands; commands=(
+'list:List open merge requests' \
+'show:Show one merge request, its commits and conversation' \
+'create:Propose a branch; run it again to add your new commits' \
+'comment:Comment on a merge request, a file in it, or another comment' \
+'review:Approve a merge request or ask for changes' \
+'checkout:Check out the proposed commits as branch mr/ID' \
+'diff:Show the proposed changes' \
+'merge:Merge into the target branch and publish (root or maintainer key)' \
+'close:Close without merging (its author or a maintainer)' \
+'reopen:Reopen a closed merge request' \
+    )
+    _describe -t commands 'swarm help mr commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__checkout_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__checkout_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr checkout commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__close_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__close_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr close commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__comment_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__comment_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr comment commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__create_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr create commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__diff_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr diff commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__list_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr list commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__merge_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__merge_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr merge commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__reopen_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr reopen commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__review_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__review_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr review commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__mr__subcmd__show_commands] )) ||
+_swarm__subcmd__help__subcmd__mr__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help mr show commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__purge_commands] )) ||
+_swarm__subcmd__help__subcmd__purge_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help purge commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__relay_commands] )) ||
+_swarm__subcmd__help__subcmd__relay_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help relay commands' commands "$@"
+}
 (( $+functions[_swarm__subcmd__help__subcmd__seed_commands] )) ||
 _swarm__subcmd__help__subcmd__seed_commands() {
     local commands; commands=()
@@ -799,8 +1406,27 @@ _swarm__subcmd__help__subcmd__seed_commands() {
 }
 (( $+functions[_swarm__subcmd__help__subcmd__status_commands] )) ||
 _swarm__subcmd__help__subcmd__status_commands() {
-    local commands; commands=()
+    local commands; commands=(
+'repos:Repositories\: sequence numbers, seeders and conflicts' \
+'relays:Relay registrations' \
+'peers:Peers known for each repo, and which are connected' \
+    )
     _describe -t commands 'swarm help status commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__status__subcmd__peers_commands] )) ||
+_swarm__subcmd__help__subcmd__status__subcmd__peers_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help status peers commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__status__subcmd__relays_commands] )) ||
+_swarm__subcmd__help__subcmd__status__subcmd__relays_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help status relays commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__help__subcmd__status__subcmd__repos_commands] )) ||
+_swarm__subcmd__help__subcmd__status__subcmd__repos_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm help status repos commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__help__subcmd__unseed_commands] )) ||
 _swarm__subcmd__help__subcmd__unseed_commands() {
@@ -816,6 +1442,11 @@ _swarm__subcmd__import_commands() {
 _swarm__subcmd__init_commands() {
     local commands; commands=()
     _describe -t commands 'swarm init commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__inspect_commands] )) ||
+_swarm__subcmd__inspect_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm inspect commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__key_commands] )) ||
 _swarm__subcmd__key_commands() {
@@ -987,6 +1618,155 @@ _swarm__subcmd__mirror__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'swarm mirror help help commands' commands "$@"
 }
+(( $+functions[_swarm__subcmd__mr_commands] )) ||
+_swarm__subcmd__mr_commands() {
+    local commands; commands=(
+'list:List open merge requests' \
+'show:Show one merge request, its commits and conversation' \
+'create:Propose a branch; run it again to add your new commits' \
+'comment:Comment on a merge request, a file in it, or another comment' \
+'review:Approve a merge request or ask for changes' \
+'checkout:Check out the proposed commits as branch mr/ID' \
+'diff:Show the proposed changes' \
+'merge:Merge into the target branch and publish (root or maintainer key)' \
+'close:Close without merging (its author or a maintainer)' \
+'reopen:Reopen a closed merge request' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm mr commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__checkout_commands] )) ||
+_swarm__subcmd__mr__subcmd__checkout_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr checkout commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__close_commands] )) ||
+_swarm__subcmd__mr__subcmd__close_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr close commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__comment_commands] )) ||
+_swarm__subcmd__mr__subcmd__comment_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr comment commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__create_commands] )) ||
+_swarm__subcmd__mr__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr create commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__diff_commands] )) ||
+_swarm__subcmd__mr__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr diff commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help_commands] )) ||
+_swarm__subcmd__mr__subcmd__help_commands() {
+    local commands; commands=(
+'list:List open merge requests' \
+'show:Show one merge request, its commits and conversation' \
+'create:Propose a branch; run it again to add your new commits' \
+'comment:Comment on a merge request, a file in it, or another comment' \
+'review:Approve a merge request or ask for changes' \
+'checkout:Check out the proposed commits as branch mr/ID' \
+'diff:Show the proposed changes' \
+'merge:Merge into the target branch and publish (root or maintainer key)' \
+'close:Close without merging (its author or a maintainer)' \
+'reopen:Reopen a closed merge request' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm mr help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__checkout_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__checkout_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help checkout commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__close_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__close_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help close commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__comment_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__comment_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help comment commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__create_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help create commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__diff_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help diff commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__list_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help list commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__merge_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__merge_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help merge commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__reopen_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help reopen commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__review_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__review_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help review commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__help__subcmd__show_commands] )) ||
+_swarm__subcmd__mr__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr help show commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__list_commands] )) ||
+_swarm__subcmd__mr__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr list commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__merge_commands] )) ||
+_swarm__subcmd__mr__subcmd__merge_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr merge commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__reopen_commands] )) ||
+_swarm__subcmd__mr__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr reopen commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__review_commands] )) ||
+_swarm__subcmd__mr__subcmd__review_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr review commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__mr__subcmd__show_commands] )) ||
+_swarm__subcmd__mr__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm mr show commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__purge_commands] )) ||
+_swarm__subcmd__purge_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm purge commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__relay_commands] )) ||
+_swarm__subcmd__relay_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm relay commands' commands "$@"
+}
 (( $+functions[_swarm__subcmd__seed_commands] )) ||
 _swarm__subcmd__seed_commands() {
     local commands; commands=()
@@ -994,8 +1774,58 @@ _swarm__subcmd__seed_commands() {
 }
 (( $+functions[_swarm__subcmd__status_commands] )) ||
 _swarm__subcmd__status_commands() {
-    local commands; commands=()
+    local commands; commands=(
+'repos:Repositories\: sequence numbers, seeders and conflicts' \
+'relays:Relay registrations' \
+'peers:Peers known for each repo, and which are connected' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
     _describe -t commands 'swarm status commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__help_commands] )) ||
+_swarm__subcmd__status__subcmd__help_commands() {
+    local commands; commands=(
+'repos:Repositories\: sequence numbers, seeders and conflicts' \
+'relays:Relay registrations' \
+'peers:Peers known for each repo, and which are connected' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'swarm status help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__help__subcmd__help_commands] )) ||
+_swarm__subcmd__status__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status help help commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__help__subcmd__peers_commands] )) ||
+_swarm__subcmd__status__subcmd__help__subcmd__peers_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status help peers commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__help__subcmd__relays_commands] )) ||
+_swarm__subcmd__status__subcmd__help__subcmd__relays_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status help relays commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__help__subcmd__repos_commands] )) ||
+_swarm__subcmd__status__subcmd__help__subcmd__repos_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status help repos commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__peers_commands] )) ||
+_swarm__subcmd__status__subcmd__peers_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status peers commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__relays_commands] )) ||
+_swarm__subcmd__status__subcmd__relays_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status relays commands' commands "$@"
+}
+(( $+functions[_swarm__subcmd__status__subcmd__repos_commands] )) ||
+_swarm__subcmd__status__subcmd__repos_commands() {
+    local commands; commands=()
+    _describe -t commands 'swarm status repos commands' commands "$@"
 }
 (( $+functions[_swarm__subcmd__unseed_commands] )) ||
 _swarm__subcmd__unseed_commands() {

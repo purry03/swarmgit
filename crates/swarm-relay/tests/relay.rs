@@ -31,16 +31,23 @@ struct Harness {
 }
 
 async fn start(limits: Limits, bind_names: bool) -> Harness {
+    start_with(
+        RelayConfig {
+            limits,
+            ..RelayConfig::default()
+        },
+        bind_names,
+    )
+    .await
+}
+
+async fn start_with(mut config: RelayConfig, bind_names: bool) -> Harness {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    let relay = Relay::new(RelayConfig {
-        names: if bind_names {
-            vec![addr.clone()]
-        } else {
-            vec![]
-        },
-        limits,
-    });
+    if bind_names {
+        config.names = vec![addr.clone()];
+    }
+    let relay = Relay::new(config);
     let task = {
         let relay = relay.clone();
         tokio::spawn(async move { relay.serve(listener).await })
@@ -179,35 +186,41 @@ async fn relay_carries_only_ciphertext() {
     let tap_addr = tap.local_addr().unwrap();
     let relay_addr = h.addr.clone();
     let seen = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    // The dialer asks for the relay's key first, then connects.
     let tap_task = {
         let seen = seen.clone();
         tokio::spawn(async move {
-            let (mut inbound, _) = tap.accept().await.unwrap();
-            let mut outbound = TcpStream::connect(relay_addr).await.unwrap();
-            let (mut ir, mut iw) = inbound.split();
-            let (mut or, mut ow) = outbound.split();
-            let up = async {
-                let mut buf = [0u8; 4096];
-                loop {
-                    let n = ir.read(&mut buf).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    seen.lock().unwrap().extend_from_slice(&buf[..n]);
-                    ow.write_all(&buf[..n]).await.unwrap();
-                }
-            };
-            let down = async {
-                let mut buf = [0u8; 4096];
-                loop {
-                    let n = or.read(&mut buf).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    iw.write_all(&buf[..n]).await.unwrap();
-                }
-            };
-            tokio::join!(up, down);
+            loop {
+                let (mut inbound, _) = tap.accept().await.unwrap();
+                let mut outbound = TcpStream::connect(relay_addr.clone()).await.unwrap();
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let (mut ir, mut iw) = inbound.split();
+                    let (mut or, mut ow) = outbound.split();
+                    let up = async {
+                        let mut buf = [0u8; 4096];
+                        loop {
+                            let n = ir.read(&mut buf).await.unwrap_or(0);
+                            if n == 0 {
+                                break;
+                            }
+                            seen.lock().unwrap().extend_from_slice(&buf[..n]);
+                            ow.write_all(&buf[..n]).await.unwrap();
+                        }
+                    };
+                    let down = async {
+                        let mut buf = [0u8; 4096];
+                        loop {
+                            let n = or.read(&mut buf).await.unwrap_or(0);
+                            if n == 0 {
+                                break;
+                            }
+                            iw.write_all(&buf[..n]).await.unwrap();
+                        }
+                    };
+                    tokio::join!(up, down);
+                });
+            }
         })
     };
     let stream = swarm_relay::connect(&tap_addr.to_string(), b_id)
@@ -228,15 +241,12 @@ async fn relay_carries_only_ciphertext() {
         !seen.windows(secret.len()).any(|w| w == secret),
         "plaintext leaked through the relay path"
     );
+    // R5: the control connection is encrypted, so the target stays hidden.
+    assert!(
+        !seen.windows(32).any(|w| w == b_id.as_bytes()),
+        "the target node ID was visible on the way to the relay"
+    );
     tap_task.abort();
-}
-
-#[tokio::test]
-async fn connecting_to_an_unknown_node_is_no_such_node() {
-    let h = start(Limits::default(), false).await;
-    let ghost = key().node_id().unwrap();
-    let err = swarm_relay::connect(&h.addr, ghost).await.unwrap_err();
-    assert_eq!(err.code(), Some("no_such_node"));
 }
 
 #[tokio::test]
@@ -504,6 +514,20 @@ async fn a_relay_that_bridges_to_the_wrong_node_fails_the_pin() {
     let impostor_task = {
         let impostor = impostor.clone();
         tokio::spawn(async move {
+            // It offers no key, so the control connection stays in clear.
+            let (mut stream, _) = evil.accept().await.unwrap();
+            let Msg::Hello { .. } = read_msg(&mut stream).await.unwrap() else {
+                panic!()
+            };
+            assert_eq!(read_msg(&mut stream).await.unwrap(), Msg::Info);
+            let reply = Msg::InfoReply {
+                version: 1,
+                caps: Vec::new(),
+                limits: Vec::new(),
+                relay_id: [0; 32],
+                observed: "127.0.0.1:1".into(),
+            };
+            write_msg(&mut stream, &reply).await.unwrap();
             let (mut stream, _) = evil.accept().await.unwrap();
             let Msg::Hello { .. } = read_msg(&mut stream).await.unwrap() else {
                 panic!()
@@ -569,4 +593,24 @@ async fn listener_reconnects_after_the_relay_restarts() {
         .unwrap()
         .is_some());
     dial.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_relay_offers_its_domain_name_but_never_an_ip() {
+    for (names, expected) in [
+        (
+            vec!["127.0.0.1:1", "relay.example:1"],
+            Some("name:relay.example:1"),
+        ),
+        (vec!["127.0.0.1:1"], None),
+    ] {
+        let config = RelayConfig {
+            names: names.into_iter().map(str::to_string).collect(),
+            ..RelayConfig::default()
+        };
+        let harness = start_with(config, false).await;
+        let info = swarm_relay::client::info(&harness.addr).await.unwrap();
+        let offered = info.caps.iter().find(|cap| cap.starts_with("name:"));
+        assert_eq!(offered.map(String::as_str), expected);
+    }
 }

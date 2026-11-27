@@ -2,12 +2,15 @@
 
 mod dial;
 mod fetch;
+pub(crate) mod mrs;
 pub mod progress;
+mod relayed;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use swarm_core::about::VerifiedAbout;
 use swarm_core::accept::AcceptState;
 use swarm_core::ids::{KeyId, Oid, RepoId};
 use swarm_net::NetError;
@@ -34,10 +37,16 @@ pub struct SyncResult {
     pub object_format: String,
     /// Connected peers.
     pub peers: usize,
+    /// Node IDs of connected peers that returned repository metadata.
+    pub peer_ids: Vec<String>,
     /// Accepted manifests.
     pub accepted: usize,
     /// Rejected envelopes.
     pub rejected: usize,
+    /// Name and description, set by an inspect.
+    pub about: Option<VerifiedAbout>,
+    /// The repo this one was forked from, as its root states it.
+    pub forked_from: Option<RepoId>,
 }
 
 impl SyncResult {
@@ -55,6 +64,27 @@ pub async fn sync_repo(
     repo: RepoId,
     hints: Vec<String>,
     progress: &Progress,
+) -> Result<SyncResult, NetError> {
+    sync_repo_inner(net, repo, hints, progress, false).await
+}
+
+/// Read and verify repository heads without requesting Git objects or writing
+/// a local repository store.
+pub async fn inspect_repo(
+    net: &Arc<NetState>,
+    repo: RepoId,
+    hints: Vec<String>,
+    progress: &Progress,
+) -> Result<SyncResult, NetError> {
+    sync_repo_inner(net, repo, hints, progress, true).await
+}
+
+async fn sync_repo_inner(
+    net: &Arc<NetState>,
+    repo: RepoId,
+    hints: Vec<String>,
+    progress: &Progress,
+    metadata_only: bool,
 ) -> Result<SyncResult, NetError> {
     let lock = net.sync_lock(repo);
     let _guard = lock.lock().await;
@@ -82,7 +112,7 @@ pub async fn sync_repo(
     // short (DHT-1).
     let mut dht_lookup = Some(tokio::spawn(crate::net::dht::find(net.dht(), repo)));
 
-    let mut candidates: Vec<Candidate> = swarm_disc::resolve_hints(&hints)
+    let mut candidates: Vec<Candidate> = swarm_disc::resolve_hints(&hints, net.settings.proxied())
         .await
         .into_iter()
         .map(|candidate| Candidate {
@@ -157,6 +187,12 @@ pub async fn sync_repo(
         }
     }
 
+    // Nothing direct worked: look for the relays that hold the nodes we know
+    // by ID (REL-29, REL-32).
+    if dialer.connected.is_empty() {
+        relayed::dial(net, repo, &mut dialer, &retry_candidates, progress).await;
+    }
+
     // Route B answers within the query burst (0 s, 1 s, 3 s). Wait for it only
     // when nothing else connected: up to find_timeout for a first clone
     // (SYNC-6), and just past the burst when we already have state.
@@ -191,6 +227,7 @@ pub async fn sync_repo(
 
     if dialer.connected.is_empty() {
         abort(dht_lookup);
+        net.set_seeders(repo, 0);
         let resolved = store.resolve(&net_state);
         if !resolved.canonical.is_empty() || !net_state.signers.is_empty() {
             let _ = store.apply_canonical(&resolved.canonical).await;
@@ -239,6 +276,16 @@ pub async fn sync_repo(
         accepted += more_accepted;
         rejected += more_rejected;
     }
+    // Only peers that answered with the repo's state count as seeders; the
+    // peer cache also holds dead and never-contacted addresses.
+    let seeders: BTreeSet<[u8; 32]> = dialer
+        .connected
+        .iter()
+        .filter(|peer| !peer.failed && peer.note.is_none())
+        .map(|peer| *peer.node().as_bytes())
+        .filter(|node| node != net.node_id.as_bytes())
+        .collect();
+    net.set_seeders(repo, seeders.len());
     if net_state.signers.is_empty() {
         abort(dht_lookup);
         let detail = dialer
@@ -257,6 +304,36 @@ pub async fn sync_repo(
              `swarm status` on the peer.",
             dialer.connected.len()
         )));
+    }
+
+    if metadata_only {
+        let root = net_state.root_manifest().ok_or_else(|| {
+            NetError::Malformed("repository has no verified root manifest".into())
+        })?;
+        let resolved = swarm_core::resolve::resolve(&net_state, &NoObjects);
+        let peer_ids: Vec<String> = dialer
+            .connected
+            .iter()
+            .filter(|peer| !peer.failed)
+            .map(|peer| peer.node().to_base32())
+            .collect();
+        return Ok(SyncResult {
+            state: "fresh".to_string(),
+            ref_list: resolved.canonical,
+            head: root.manifest.head.clone(),
+            seq: root.manifest.seq,
+            store_path: PathBuf::new(),
+            object_format: net_state
+                .object_format
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            peers: peer_ids.len(),
+            peer_ids,
+            accepted,
+            rejected,
+            about: fetch::fetch_about(repo, &net_state, &dialer.connected).await,
+            forked_from: forked_from(&net_state, repo),
+        });
     }
 
     // DHT-5: the head pointer says which root seq exists. While our peers
@@ -316,16 +393,23 @@ pub async fn sync_repo(
         net.max_pack_bytes,
         progress,
     )
-    .await?;
+    .await
+    .map_err(|err| name_the_relay(net, &dialer.connected, err))?;
     progress.say("done", "download complete");
 
     // Manifests are stored only once their objects are: a node never
     // advertises heads it cannot serve (a fetch that fails is retried by
     // the next sync, which starts again from the stored state).
     store
-        .persist_state(&net_state)
+        .adopt_newer(&mut net_state)
+        .and_then(|()| store.persist_state(&net_state))
         .map_err(|err| NetError::Malformed(err.to_string()))?;
     persist_db(net, repo, &object_format, &net_state, row.is_none())?;
+    if let Some(about) = fetch::fetch_about(repo, &net_state, &dialer.connected).await {
+        if let Err(err) = store.write_about(&about, &net_state, crate::net::now() as u64) {
+            tracing::debug!(error = %err, "cannot store the repo name");
+        }
+    }
 
     let resolved = store.resolve(&net_state);
     store
@@ -339,6 +423,7 @@ pub async fn sync_repo(
             .map_err(|_| NetError::Malformed("database lock poisoned".into()))?;
         let _ = db.set_last_sync(repo, crate::net::now());
     }
+    mrs::exchange(net, repo, &dialer.connected).await;
     if row.is_none() {
         // A first clone seeds (SEED-1): announce it on the DHT right away.
         net.announce_dht(repo);
@@ -355,6 +440,24 @@ pub async fn sync_repo(
             peers: dialer.connected.len(),
         },
     ))
+}
+
+/// A transfer cut off while it went through a relay says which relay, since
+/// that is the first thing to check.
+fn name_the_relay(net: &NetState, peers: &[dial::Connected], err: NetError) -> NetError {
+    let cut = matches!(
+        err,
+        NetError::Io(_) | NetError::Timeout(_) | NetError::Closed
+    );
+    let relay = peers
+        .iter()
+        .find_map(|peer| net.relay_of(peer.handle.info().node_id));
+    match relay {
+        Some(relay) if cut => NetError::Relay(format!(
+            "the transfer through the relay {relay} was cut off ({err}); try again"
+        )),
+        _ => err,
+    }
 }
 
 /// The text of the error when no peer could be reached.
@@ -537,7 +640,27 @@ fn result(
         store_path: store.store_path(),
         object_format,
         peers: counts.peers,
+        peer_ids: Vec::new(),
         accepted: counts.accepted,
         rejected: counts.rejected,
+        about: None,
+        forked_from: forked_from(net_state, store.repo_id()),
+    }
+}
+
+/// The source a fork's root manifest names.
+fn forked_from(state: &AcceptState, repo: RepoId) -> Option<RepoId> {
+    state
+        .root_manifest()
+        .and_then(|root| root.manifest.forked_from)
+        .map(RepoId::from_bytes)
+        .filter(|source| *source != repo)
+}
+
+struct NoObjects;
+
+impl swarm_core::resolve::Ancestry for NoObjects {
+    fn is_ancestor(&self, _a: &Oid, _b: &Oid) -> Option<bool> {
+        None
     }
 }

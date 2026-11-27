@@ -13,6 +13,7 @@ snow.workspace = true
 swarm-core = { path = "../swarm-core" }
 thiserror.workspace = true
 tokio.workspace = true
+tokio-socks.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

@@ -177,7 +177,7 @@ stop_daemon c2
 HEAD_NEW=$(push d $PD "$WORK/pex-src")
 SEQ_D=$(seq_of d "$REPO")
 cd "$WORK/two-y"
-run_as y $PY swarm daemon >/dev/null
+run_as y $PY swarm daemon start >/dev/null
 SEQ_Y=$(seq_of y "$REPO")
 [[ $SEQ_Y -lt $SEQ_D ]] || swarm_fail "Y is not behind D ($SEQ_Y vs $SEQ_D)"
 

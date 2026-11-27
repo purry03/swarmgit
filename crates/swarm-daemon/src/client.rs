@@ -178,6 +178,16 @@ impl Client {
         Self::connect_inner(home, true).await
     }
 
+    /// Connect to a running daemon of any version, to inspect or stop it.
+    pub async fn attach(home: Home) -> Result<Self, ClientError> {
+        let stream = open_or_start(&home, false).await?;
+        Ok(Self {
+            reader: BufReader::new(stream),
+            next_id: 1,
+            home,
+        })
+    }
+
     /// Connect only if a daemon is already running.
     pub async fn connect_existing(home: Home) -> Result<Self, ClientError> {
         Self::connect_inner(home, false).await

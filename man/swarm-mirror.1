@@ -1,0 +1,17 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mirror 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mirror \- Publish a repo for static mirrors (plain file hosting)
+.SH SYNOPSIS
+\fBswarm mirror\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Publish a repo for static mirrors (plain file hosting)
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+swarm\-mirror\-export(1)
+Write DIR/<repo\-id>/repo.swarmbundle; serve DIR with any web server

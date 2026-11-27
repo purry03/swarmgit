@@ -20,6 +20,11 @@ cd $SRC && git push -q swarm main                                  # no change
 swarm status --json | jq -e '.repos[0].seq == 2'                   # still 2, publish was a no-op
 # ----- end spec 11.2 acceptance block -----
 
+echo "== status lists the project folders under each repo"
+swarm status --json | jq -e --arg src "$SRC" '.repos[0].folders | index($src) != null' >/dev/null ||
+    swarm_fail "status --json does not list the folder swarm init ran in"
+swarm status | grep -qF "↳ $SRC" || swarm_fail "status does not show the folder"
+
 cd "$SRC"
 REPO_ID=${ID#swarm://}
 REPO_ID=${REPO_ID%%\?*}
@@ -95,6 +100,30 @@ if find "$SWARM_HOME" -name '*.tmp' -print -quit | grep -q .; then
 fi
 if grep -q "ignoring invalid manifest" "$SWARM_HOME/daemon.log"; then
     swarm_fail "daemon found a torn manifest after the kill"
+fi
+
+echo "== SEC-13: purge asks first, and deletes the key only when told to"
+REPO_ID=$(swarm status --json | jq -r '.repos[0].repo')
+if echo no | swarm purge "$REPO_ID" >/dev/null 2>&1; then
+    swarm_fail "purge went ahead without a yes"
+fi
+[[ -f $SWARM_HOME/keys/$REPO_ID.key ]] || swarm_fail "a refused purge removed the key"
+cp "$SWARM_HOME/keys/$REPO_ID.key" "$SWARM_HOME/key.copy"
+cp -a "$SWARM_HOME/repos/$REPO_ID" "$SWARM_HOME/repo.copy"
+echo yes | swarm purge "$REPO_ID" >/dev/null 2>&1 || swarm_fail "purge failed"
+[[ -f $SWARM_HOME/keys/$REPO_ID.key ]] || swarm_fail "purge deleted the key unasked"
+[[ ! -e $SWARM_HOME/repos/$REPO_ID ]] || swarm_fail "purge left the store"
+# Bring the repo back to purge it again, key included.
+cp -a "$SWARM_HOME/repo.copy" "$SWARM_HOME/repos/$REPO_ID"
+swarm daemon stop >/dev/null
+sleep 1
+sqlite3 "$SWARM_HOME/swarm.db" "INSERT INTO repos VALUES(x'$(python3 -c 'import base64,sys; print(base64.b32decode(sys.argv[1].upper()+"====").hex())' "$REPO_ID")', 'sha256', 0, 0, NULL);"
+printf 'yes\nyes\n' | swarm purge "$REPO_ID" >/dev/null 2>&1 || swarm_fail "second purge failed"
+[[ ! -e $SWARM_HOME/keys/$REPO_ID.key ]] || swarm_fail "purge left the key"
+[[ ! -e $SWARM_HOME/repos/$REPO_ID ]] || swarm_fail "purge left the store"
+[[ $(swarm status --json | jq '.repos | length') == 0 ]] || swarm_fail "purge left the repo listed"
+if swarm purge "$REPO_ID" --yes >/dev/null 2>&1; then
+    swarm_fail "purging an unknown repo succeeded"
 fi
 
 echo "M1 PASS"

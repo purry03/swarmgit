@@ -90,6 +90,14 @@ pub struct Config {
     relay_mode: Option<Many>,
     /// Milliseconds before a relay dial (`SWARM_RELAY_DELAY_MS`).
     relay_delay_ms: Option<Many>,
+    /// Find relays through the DHT and gossip, `on` or `off`
+    /// (`SWARM_RELAY_DISCOVERY`).
+    relay_discovery: Option<Many>,
+    /// Secret for the configured relays that want one
+    /// (`SWARM_RELAY_PASSWORD`).
+    relay_password: Option<Many>,
+    /// Most bytes one relayed session may carry (`SWARM_RELAY_MAX_BYTES`).
+    relay_max_bytes: Option<Many>,
     /// LAN discovery on or off (`SWARM_NO_LAN`).
     lan: Option<Many>,
     /// LAN discovery UDP port (`SWARM_LAN_PORT`).
@@ -114,6 +122,24 @@ pub struct Config {
     log: Option<Many>,
     /// Static mirror base URLs (`SWARM_MIRRORS`).
     mirrors: Option<Many>,
+    /// SOCKS5 proxy for every outbound connection (`SWARM_PROXY`).
+    proxy: Option<Many>,
+    /// Randomized handshake and frame sizes on or off (`SWARM_OBFS`).
+    obfs: Option<Many>,
+    /// Tor control port that hosts a hidden service (`SWARM_ONION_CONTROL`).
+    onion_control: Option<Many>,
+    /// Tor control password (`SWARM_ONION_PASSWORD`).
+    onion_password: Option<Many>,
+    /// Experimental UDP hole punching (`SWARM_EXPERIMENTAL_UDP`).
+    experimental_udp: Option<Many>,
+    /// Connections open at once through the hidden service
+    /// (`SWARM_ONION_MAX_CONNECTIONS`).
+    onion_max_connections: Option<Many>,
+    /// New hidden-service connections per minute
+    /// (`SWARM_ONION_MAX_PER_MINUTE`).
+    onion_max_per_minute: Option<Many>,
+    /// Upload cap in kilobits per second (`SWARM_UPLOAD_KBPS`).
+    upload_kbps: Option<Many>,
     /// Anything else is reported, not silently ignored.
     #[serde(flatten)]
     unknown: BTreeMap<String, serde_yaml::Value>,
@@ -189,9 +215,20 @@ impl Config {
             }
         }
         for (name, value) in [
+            ("SWARM_RELAY_DISCOVERY", &self.relay_discovery),
+            ("SWARM_RELAY_PASSWORD", &self.relay_password),
+            ("SWARM_RELAY_MAX_BYTES", &self.relay_max_bytes),
             ("SWARM_IDLE_EXIT_MINUTES", &self.idle_exit_minutes),
             ("SWARM_LOG", &self.log),
             ("SWARM_MIRRORS", &self.mirrors),
+            ("SWARM_PROXY", &self.proxy),
+            ("SWARM_OBFS", &self.obfs),
+            ("SWARM_ONION_CONTROL", &self.onion_control),
+            ("SWARM_ONION_PASSWORD", &self.onion_password),
+            ("SWARM_EXPERIMENTAL_UDP", &self.experimental_udp),
+            ("SWARM_ONION_MAX_CONNECTIONS", &self.onion_max_connections),
+            ("SWARM_ONION_MAX_PER_MINUTE", &self.onion_max_per_minute),
+            ("SWARM_UPLOAD_KBPS", &self.upload_kbps),
         ] {
             if let Some(value) = value {
                 out.push((name, value.joined()));

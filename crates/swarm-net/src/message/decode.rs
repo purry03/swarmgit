@@ -1,9 +1,10 @@
 //! Decoding for the CBOR wire messages (spec section 7.3).
 
 use swarm_core::cbor::{self, Value};
+use swarm_core::consts::MAX_ABOUT_BYTES;
 use swarm_core::ids::Oid;
 
-use super::Message;
+use super::{Message, MrTip, MAX_MR_TIPS};
 use crate::NetError;
 
 impl Message {
@@ -35,9 +36,130 @@ impl Message {
             14 => decode_pq_init(items),
             15 => decode_pq_resp(items),
             16 => decode_pq_auth(items),
+            17 => decode_punch_offer(items),
+            18 => decode_punch_answer(items),
+            19 => decode_get_about(items),
+            20 => decode_about(items),
+            21 => decode_announce_about(items),
+            22 => decode_get_mrs(items),
+            23 => decode_mrs(items),
+            24 => decode_announce_mrs(items),
             other => Err(NetError::Malformed(format!("unknown message type {other}"))),
         }
     }
+}
+
+fn about_record(value: &Value) -> Result<Vec<u8>, NetError> {
+    let record = as_bytes(value)?;
+    if record.len() > MAX_ABOUT_BYTES {
+        return Err(NetError::LimitExceeded("about record is too large".into()));
+    }
+    Ok(record.to_vec())
+}
+
+fn decode_get_about(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    Ok(Message::GetAbout {
+        rid: as_u64(&items[1])?,
+        repo_ix: as_u16(&items[2])?,
+    })
+}
+
+fn decode_about(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    let record = match &items[2] {
+        Value::Null => None,
+        value => Some(about_record(value)?),
+    };
+    Ok(Message::About {
+        rid: as_u64(&items[1])?,
+        record,
+    })
+}
+
+fn decode_announce_about(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    Ok(Message::AnnounceAbout {
+        repo_ix: as_u16(&items[1])?,
+        record: about_record(&items[2])?,
+    })
+}
+
+fn mr_tips(value: &Value) -> Result<Vec<MrTip>, NetError> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| NetError::Malformed("expected an array".into()))?;
+    if items.len() > MAX_MR_TIPS {
+        return Err(NetError::LimitExceeded("too many merge requests".into()));
+    }
+    items
+        .iter()
+        .map(|item| {
+            let parts = item
+                .as_array()
+                .filter(|parts| parts.len() == 3)
+                .ok_or_else(|| NetError::Malformed("bad merge request entry".into()))?;
+            Ok(MrTip {
+                mr: as_oid(&parts[0])?,
+                author: as_array32(&parts[1])?,
+                tip: as_oid(&parts[2])?,
+            })
+        })
+        .collect()
+}
+
+fn decode_get_mrs(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    Ok(Message::GetMrs {
+        rid: as_u64(&items[1])?,
+        repo_ix: as_u16(&items[2])?,
+    })
+}
+
+fn decode_mrs(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    Ok(Message::Mrs {
+        rid: as_u64(&items[1])?,
+        tips: mr_tips(&items[2])?,
+    })
+}
+
+fn decode_announce_mrs(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    Ok(Message::AnnounceMrs {
+        repo_ix: as_u16(&items[1])?,
+        tips: mr_tips(&items[2])?,
+    })
+}
+
+/// Most candidate addresses a punch message may list.
+const MAX_PUNCH_ADDRESSES: usize = 8;
+
+fn punch_addresses(value: &Value) -> Result<Vec<Vec<u8>>, NetError> {
+    let addresses = as_bytes_vec(value)?;
+    if addresses.len() > MAX_PUNCH_ADDRESSES {
+        return Err(NetError::LimitExceeded("too many punch addresses".into()));
+    }
+    Ok(addresses)
+}
+
+fn decode_punch_offer(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 4)?;
+    let token = <[u8; 16]>::try_from(as_bytes(&items[2])?)
+        .map_err(|_| NetError::Malformed("punch token is not 16 bytes".into()))?;
+    Ok(Message::PunchOffer {
+        rid: as_u64(&items[1])?,
+        token,
+        addresses: punch_addresses(&items[3])?,
+    })
+}
+
+fn decode_punch_answer(items: &[Value]) -> Result<Message, NetError> {
+    expect_len(items, 3)?;
+    Ok(Message::PunchAnswer {
+        rid: as_u64(&items[1])?,
+        addresses: punch_addresses(&items[2])?,
+    })
 }
 
 fn decode_hello(items: &[Value]) -> Result<Message, NetError> {
@@ -294,18 +416,17 @@ fn as_oids(value: &Value) -> Result<Vec<Oid>, NetError> {
     let items = value
         .as_array()
         .ok_or_else(|| NetError::Malformed("expected an array".into()))?;
-    items
-        .iter()
-        .map(|item| {
-            let bytes = as_bytes(item)?;
-            if bytes.len() != 20 && bytes.len() != 32 {
-                return Err(NetError::Malformed(
-                    "object ID is not 20 or 32 bytes".into(),
-                ));
-            }
-            Ok(Oid::new(bytes.to_vec()))
-        })
-        .collect()
+    items.iter().map(as_oid).collect()
+}
+
+fn as_oid(value: &Value) -> Result<Oid, NetError> {
+    let bytes = as_bytes(value)?;
+    if bytes.len() != 20 && bytes.len() != 32 {
+        return Err(NetError::Malformed(
+            "object ID is not 20 or 32 bytes".into(),
+        ));
+    }
+    Ok(Oid::new(bytes.to_vec()))
 }
 
 #[cfg(test)]
@@ -374,6 +495,20 @@ mod tests {
             rid: 5,
             chunk: vec![1, 2],
             final_chunk: true,
+        });
+        let tip = MrTip {
+            mr: Oid::new(vec![1u8; 20]),
+            author: [2u8; 32],
+            tip: Oid::new(vec![3u8; 20]),
+        };
+        round_trip(Message::GetMrs { rid: 6, repo_ix: 0 });
+        round_trip(Message::Mrs {
+            rid: 6,
+            tips: vec![tip.clone()],
+        });
+        round_trip(Message::AnnounceMrs {
+            repo_ix: 0,
+            tips: vec![tip],
         });
         round_trip(Message::Ping { nonce: 8 });
         round_trip(Message::Pong { nonce: 8 });

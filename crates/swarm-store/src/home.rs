@@ -116,6 +116,13 @@ impl Home {
         self.keys_dir().join(format!("{}.key", repo.to_base32()))
     }
 
+    /// `$SWARM_HOME/keys/identity.key`: signs merge request events in repos
+    /// where this machine holds no root or maintainer key.
+    #[must_use]
+    pub fn identity_key_path(&self) -> PathBuf {
+        self.keys_dir().join("identity.key")
+    }
+
     /// `$SWARM_HOME/repos/<repo-id>`.
     #[must_use]
     pub fn repo_dir(&self, repo: RepoId) -> PathBuf {

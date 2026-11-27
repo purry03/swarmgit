@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr-review 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr\-review \- Approve a merge request or ask for changes
+.SH SYNOPSIS
+\fBswarm mr review\fR [\fB\-\-approve\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-offline\fR] [\fB\-\-request\-changes\fR] [\fB\-m\fR|\fB\-\-message\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIMR\fR] 
+.SH DESCRIPTION
+Approve a merge request or ask for changes
+.SH OPTIONS
+.TP
+\fB\-\-approve\fR
+Approve the commits as they are now
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-\-request\-changes\fR
+Ask for changes; say which with \-m
+.TP
+\fB\-m\fR, \fB\-\-message\fR \fI<MESSAGE>\fR
+What you think
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIMR\fR]
+Its branch or ID (default: the current branch)

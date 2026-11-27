@@ -9,6 +9,26 @@ use swarm_core::ids::Oid;
 
 use crate::NetError;
 
+/// `Hello` capability of a node that understands messages 19 to 21.
+pub const ABOUT_CAP: &str = "about";
+
+/// `Hello` capability of a node that understands messages 22 to 24.
+pub const MR_CAP: &str = "mr";
+
+/// Most merge request refs one message may list.
+pub const MAX_MR_TIPS: usize = swarm_core::consts::MAX_MR_REFS;
+
+/// One author's chain on one merge request: the ref `refs/mr/<mr>/<author>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MrTip {
+    /// Object ID of the opening event.
+    pub mr: Oid,
+    /// Key ID of the author.
+    pub author: [u8; 32],
+    /// Object ID of the author's latest event.
+    pub tip: Oid,
+}
+
 /// A request ID chosen by the requester.
 pub type Rid = u64;
 
@@ -125,6 +145,68 @@ pub enum Message {
         /// Echoed nonce.
         nonce: u64,
     },
+    /// Type 17, experimental: "punch a UDP path to me". Sent only to peers
+    /// with the `udp-punch` capability.
+    PunchOffer {
+        /// Request ID.
+        rid: Rid,
+        /// Marks the probes of this attempt.
+        token: [u8; 16],
+        /// Encoded candidate addresses of the sender.
+        addresses: Vec<Vec<u8>>,
+    },
+    /// Type 18, experimental: the reply to `PunchOffer`.
+    PunchAnswer {
+        /// Request ID.
+        rid: Rid,
+        /// Encoded candidate addresses of the sender.
+        addresses: Vec<Vec<u8>>,
+    },
+    /// Type 19: ask for the repo's name and description. Types 19 to 21 are
+    /// sent only to peers with the `about` capability.
+    GetAbout {
+        /// Request ID.
+        rid: Rid,
+        /// Shared repo index.
+        repo_ix: u16,
+    },
+    /// Type 20: the reply to `GetAbout`.
+    About {
+        /// Request ID.
+        rid: Rid,
+        /// The signed record, or none when there is none.
+        record: Option<Vec<u8>>,
+    },
+    /// Type 21: a newly set name and description.
+    AnnounceAbout {
+        /// Shared repo index.
+        repo_ix: u16,
+        /// The signed record.
+        record: Vec<u8>,
+    },
+    /// Type 22: ask for the repo's merge requests. Types 22 to 24 are sent
+    /// only to peers with the `mr` capability.
+    GetMrs {
+        /// Request ID.
+        rid: Rid,
+        /// Shared repo index.
+        repo_ix: u16,
+    },
+    /// Type 23: the reply to `GetMrs`.
+    Mrs {
+        /// Request ID.
+        rid: Rid,
+        /// Every `refs/mr` ref held.
+        tips: Vec<MrTip>,
+    },
+    /// Type 24: merge request events the receiver may not have. The receiver
+    /// asks for their objects with `Want` on the same session.
+    AnnounceMrs {
+        /// Shared repo index.
+        repo_ix: u16,
+        /// The refs that may be new to the receiver.
+        tips: Vec<MrTip>,
+    },
     /// Type 14, phase B only.
     PqInit {
         /// ML-KEM-768 encapsulation key, 1184 bytes.
@@ -174,6 +256,14 @@ impl Message {
             Self::PqInit { .. } => 14,
             Self::PqResp { .. } => 15,
             Self::PqAuth { .. } => 16,
+            Self::PunchOffer { .. } => 17,
+            Self::PunchAnswer { .. } => 18,
+            Self::GetAbout { .. } => 19,
+            Self::About { .. } => 20,
+            Self::AnnounceAbout { .. } => 21,
+            Self::GetMrs { .. } => 22,
+            Self::Mrs { .. } => 23,
+            Self::AnnounceMrs { .. } => 24,
         }
     }
 
@@ -190,9 +280,33 @@ impl Message {
             | Self::Peers { rid, .. }
             | Self::Want { rid, .. }
             | Self::PackHeader { rid, .. }
-            | Self::PackData { rid, .. } => Some(*rid),
+            | Self::PackData { rid, .. }
+            | Self::PunchOffer { rid, .. }
+            | Self::PunchAnswer { rid, .. }
+            | Self::GetAbout { rid, .. }
+            | Self::About { rid, .. }
+            | Self::GetMrs { rid, .. }
+            | Self::Mrs { rid, .. } => Some(*rid),
             _ => None,
         }
+    }
+
+    /// True for a message that answers a request. Both ends number their
+    /// own requests, so only these may be matched to ours.
+    #[must_use]
+    pub fn is_reply(&self) -> bool {
+        matches!(
+            self,
+            Self::Error { .. }
+                | Self::Heads { .. }
+                | Self::Manifest { .. }
+                | Self::Peers { .. }
+                | Self::PackHeader { .. }
+                | Self::PackData { .. }
+                | Self::PunchAnswer { .. }
+                | Self::About { .. }
+                | Self::Mrs { .. }
+        )
     }
 
     /// Set the request ID when the message has one.
@@ -207,7 +321,13 @@ impl Message {
             | Self::Peers { rid, .. }
             | Self::Want { rid, .. }
             | Self::PackHeader { rid, .. }
-            | Self::PackData { rid, .. } => *rid = value,
+            | Self::PackData { rid, .. }
+            | Self::PunchOffer { rid, .. }
+            | Self::PunchAnswer { rid, .. }
+            | Self::GetAbout { rid, .. }
+            | Self::About { rid, .. }
+            | Self::GetMrs { rid, .. }
+            | Self::Mrs { rid, .. } => *rid = value,
             _ => {}
         }
     }
@@ -318,6 +438,44 @@ impl Message {
             ]),
             Self::Ping { nonce } => array(vec![uint(12), uint(*nonce)]),
             Self::Pong { nonce } => array(vec![uint(13), uint(*nonce)]),
+            Self::PunchOffer {
+                rid,
+                token,
+                addresses,
+            } => array(vec![
+                uint(17),
+                uint(*rid),
+                Value::Bytes(token.to_vec()),
+                Value::Array(addresses.iter().cloned().map(Value::Bytes).collect()),
+            ]),
+            Self::PunchAnswer { rid, addresses } => array(vec![
+                uint(18),
+                uint(*rid),
+                Value::Array(addresses.iter().cloned().map(Value::Bytes).collect()),
+            ]),
+            Self::GetAbout { rid, repo_ix } => {
+                array(vec![uint(19), uint(*rid), uint(u64::from(*repo_ix))])
+            }
+            Self::About { rid, record } => array(vec![
+                uint(20),
+                uint(*rid),
+                match record {
+                    Some(bytes) => Value::Bytes(bytes.clone()),
+                    None => Value::Null,
+                },
+            ]),
+            Self::AnnounceAbout { repo_ix, record } => array(vec![
+                uint(21),
+                uint(u64::from(*repo_ix)),
+                Value::Bytes(record.clone()),
+            ]),
+            Self::GetMrs { rid, repo_ix } => {
+                array(vec![uint(22), uint(*rid), uint(u64::from(*repo_ix))])
+            }
+            Self::Mrs { rid, tips } => array(vec![uint(23), uint(*rid), mr_tips(tips)]),
+            Self::AnnounceMrs { repo_ix, tips } => {
+                array(vec![uint(24), uint(u64::from(*repo_ix)), mr_tips(tips)])
+            }
             Self::PqInit { ek, r_i, pad } => array(vec![
                 uint(14),
                 Value::Bytes(ek.clone()),
@@ -338,6 +496,20 @@ impl Message {
         };
         cbor::encode(&value).map_err(NetError::from)
     }
+}
+
+fn mr_tips(tips: &[MrTip]) -> Value {
+    Value::Array(
+        tips.iter()
+            .map(|tip| {
+                array(vec![
+                    Value::Bytes(tip.mr.as_slice().to_vec()),
+                    Value::Bytes(tip.author.to_vec()),
+                    Value::Bytes(tip.tip.as_slice().to_vec()),
+                ])
+            })
+            .collect(),
+    )
 }
 
 fn uint(value: u64) -> Value {

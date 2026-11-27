@@ -1,0 +1,114 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm \- Zero\-setup peer\-to\-peer git
+.SH SYNOPSIS
+\fBswarm\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Swarmgit is a peer\-to\-peer git remote. A repository has a swarm:// link, and anyone who can reach a peer holding it can clone it, with no server and no account. You keep using git; the git\-remote\-swarm helper handles swarm:// remotes, and a background daemon talks to peers. Pushing needs the repository\*(Aqs root or maintainer key, while anyone with the link can open and discuss merge requests.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+swarm\-init(1)
+Create a repo key and publish the first manifest
+.TP
+swarm\-link(1)
+Print the link for a repo
+.TP
+swarm\-status(1)
+Show the daemon, repos, relays and peers
+.TP
+swarm\-inspect(1)
+Show a repo\*(Aqs name, branches and forks without downloading Git objects
+.TP
+swarm\-about(1)
+Show or set a repo\*(Aqs name and description (root or maintainer key)
+.TP
+swarm\-discover\-relays(1)
+Find public relay servers through the Mainline DHT and relay gossip
+.TP
+swarm\-seed(1)
+Sync a repo and keep serving it
+.TP
+swarm\-unseed(1)
+Stop serving a repo but keep its store
+.TP
+swarm\-gc(1)
+Repack a repo\*(Aqs store and drop unreachable objects, when idle (ST\-7)
+.TP
+swarm\-purge(1)
+Delete a repo\*(Aqs store and manifests, and stop serving it
+.TP
+swarm\-mr(1)
+Merge requests: propose changes, discuss, review and merge them
+.TP
+swarm\-fork(1)
+Create an independent repo from another one
+.TP
+swarm\-export(1)
+Write a repo and its signed state to a bundle file for offline transfer
+.TP
+swarm\-mirror(1)
+Publish a repo for static mirrors (plain file hosting)
+.TP
+swarm\-import(1)
+Read a bundle file, making its repo available offline
+.TP
+swarm\-maintainers(1)
+Add or remove maintainers, who may publish without the root key
+.TP
+swarm\-accept(1)
+Settle a ref conflict here by taking one signer\*(Aqs value
+.TP
+swarm\-key(1)
+Key management
+.TP
+swarm\-completions(1)
+Print a shell completion script (bash, zsh, fish, elvish, powershell)
+.TP
+swarm\-relay(1)
+Run a relay server for peers that cannot accept connections
+.TP
+swarm\-daemon(1)
+Start, stop or restart the background daemon
+.SH VERSION
+v0.1.0
+.SH EXAMPLES
+Publish the repository you are in, then clone it elsewhere with its link:
+.PP
+.nf
+swarm init
+git push swarm main
+git clone \(aqswarm://...\(aq
+.fi
+.PP
+Propose a branch for someone else\(aqs repository, from a clone of it:
+.PP
+.nf
+git checkout \-b fix
+git commit \-am "Fix the thing"
+swarm mr create
+.fi
+.SH ENVIRONMENT
+.TP
+SWARM_HOME
+Where keys, repositories and the daemon\(aqs files are kept.
+.TP
+SWARM_CONFIG
+The configuration file to read.
+.SH FILES
+.TP
+/etc/swarmgit/config.yaml, ~/.config/swarmgit/config.yaml
+Settings.
+.SH SEE ALSO
+.BR git (1).
+Each command has its own page, such as
+.BR swarm\-mr (1).
+The user guide is at https://swarmgit.com/docs.

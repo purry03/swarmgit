@@ -1,0 +1,23 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-maintainers 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-maintainers \- Add or remove maintainers, who may publish without the root key
+.SH SYNOPSIS
+\fBswarm maintainers\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Add or remove maintainers, who may publish without the root key
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+swarm\-maintainers\-add(1)
+Authorize a key (root key only), optionally limited to ref globs
+.TP
+swarm\-maintainers\-remove(1)
+Remove a maintainer (root key only)
+.TP
+swarm\-maintainers\-list(1)
+List the maintainers

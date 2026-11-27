@@ -49,8 +49,8 @@ scripts/package.sh --tar --macos               # macOS archives
 ```
 
 The Linux packages install `/usr/bin/swarm` and a `git-remote-swarm` symlink,
-plus shell completions for bash, zsh and fish. They depend on `git` and
-`ca-certificates`. The client daemon starts on demand, so the client package
+plus shell completions for bash, zsh and fish and man pages (`man swarm`). They
+depend on `git` and `ca-certificates`. The client daemon starts on demand, so the client package
 has no systemd unit. Archives contain `bin/swarm`, `bin/git-remote-swarm` and
 `bin/swarm-relay`; put `bin/` on your `PATH`. Linux binaries link against glibc
 2.17, so they run on older distributions.
@@ -62,8 +62,9 @@ archives aren't signed or notarized by Apple, so a downloaded binary may need
 `xattr -d com.apple.quarantine swarm`.
 
 The same script builds `swarm-relay`, the relay server package with a systemd
-unit. Swarmgit doesn't run a public relay, so you run your own or use one you
-trust. See the [relay guide](docs/RELAY-GUIDE.md).
+unit. No relay is built into the client: it uses the relays you configure, the
+relay hints in links and public relays it discovers. Run your own if you don't
+want to depend on strangers. See the [relay guide](docs/RELAY-GUIDE.md).
 
 To build from source, see [Build and test](#build-and-test).
 
@@ -89,6 +90,17 @@ swarm://<repo-id>?h=tcp:host:42424@<node-id>
 
 Anyone who can reach the peer named in the link can clone the repository.
 
+The owner or a maintainer can also give the repository a name and description,
+which `swarm inspect` and the web explorer show:
+
+```bash
+swarm about <repo> --name "hello" --description "a first repository"
+```
+
+`swarm status` shows what the daemon is serving. To look at a repository before
+cloning it, `swarm inspect '<link>'` shows its name, description, branches,
+tags and fork links from signed metadata, without downloading any objects.
+
 ## Clone a repository
 
 ```bash
@@ -102,6 +114,30 @@ After that, `git fetch`, `git pull` and `git push swarm main` work as usual.
 > Pushing from a clone needs the repository signing key. To share write access,
 > copy the key or authorize a maintainer key. The
 > [client guide](docs/USER-GUIDE.md) covers both.
+
+## Merge requests
+
+Anyone with the link can propose a branch. No repo key is needed:
+
+```bash
+git checkout -b fix
+git commit -am "Fix the thing"
+swarm mr create                  # run it again after more commits
+```
+
+The owner and anyone else discuss, review and merge it, naming it by its branch:
+
+```bash
+swarm mr list
+swarm mr diff fix
+swarm mr comment fix --file src/lib.rs --line 12 -m "Why?"
+swarm mr review fix --approve
+swarm mr merge fix
+```
+
+From a fork, `swarm mr create -R '<link of the original>'` proposes the branch
+there. The conversation is signed, stored with the repo, and cannot be edited
+afterwards. See [merge requests](docs/USER-GUIDE.md#7-merge-requests).
 
 ## Try the two-peer demo
 
@@ -119,8 +155,8 @@ Open a shell on a peer with:
 docker compose -f compose.peers.yaml exec peer-a bash
 ```
 
-The [client guide](docs/USER-GUIDE.md) has the full walkthrough, including key
-copying, seeding and configuration.
+The [client guide](docs/USER-GUIDE.md) covers the same demo by hand, and everything
+from installing to keys, seeding and configuration.
 
 ## Why Swarmgit
 
@@ -174,18 +210,20 @@ scripts/ci.sh
 
 | Document | What it covers |
 | --- | --- |
-| [Client guide](docs/USER-GUIDE.md) | Docker demo, seeding, bundles, mirrors, maintainers, configuration and troubleshooting. |
-| [Relay guide](docs/RELAY-GUIDE.md) | Installing and running a relay, client registration, capacity and privacy. |
+| [Client guide](docs/USER-GUIDE.md) | Installing, daily use, merge requests, seeding, reachability, keys, settings and troubleshooting. |
+| [Relay guide](docs/RELAY-GUIDE.md) | Installing and running a relay, firewall and DNS, private and public relays, client setup, upgrades and troubleshooting. |
+| [Tor guide](docs/TOR-GUIDE.md) | SOCKS5 proxying and onion services. |
 | [Relay design](docs/RELAY-DESIGN.md) | Relay protocol and network discovery design. |
 | [Changelog](CHANGELOG.md) | What changed in each milestone. |
 | [Protocol spec](Swarmgit%20Agent-Buildable%20Spec%20for%20a%20Zero-Setup%20P2P%20Git.md) | The full protocol and implementation spec. |
 
 ## Project status
 
-Swarmgit is pre-1.0. The tree includes milestones M0 through M8 and relay
+Swarmgit is pre-1.0. The tree includes milestones M0 through M9 and relay
 support: core types, the daemon with its CLI and remote helper, encrypted
 transport, LAN and DHT discovery, peer exchange, multi-peer fetch, bundles,
-maintainers, static mirrors, key recovery and rotation, and relays. The
+maintainers, merge requests, static mirrors, key recovery and rotation, relays, SOCKS5 and Tor,
+traffic shaping, inbound limits and experimental UDP hole punching. The
 protocol and CLI may still change before 1.0.
 
 ## Layout

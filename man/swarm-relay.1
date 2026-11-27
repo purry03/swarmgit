@@ -1,0 +1,67 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-relay 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-relay \- Run a relay server for peers that cannot accept connections
+.SH SYNOPSIS
+\fBswarm relay\fR [\fB\-\-listen\fR] [\fB\-\-name\fR] [\fB\-\-allow\-node\fR] [\fB\-\-password\-file\fR] [\fB\-\-key\-file\fR] [\fB\-\-metrics\fR] [\fB\-\-max\-listeners\fR] [\fB\-\-max\-splices\fR] [\fB\-\-listeners\-per\-ip\fR] [\fB\-\-splices\-per\-ip\fR] [\fB\-\-connects\-per\-minute\fR] [\fB\-\-splice\-kib\-per\-sec\fR] [\fB\-\-node\-daily\-mib\fR] [\fB\-\-idle\-secs\fR] [\fB\-\-no\-network\fR] [\fB\-\-public\fR] [\fB\-\-allow\-private\fR] [\fB\-\-round\-secs\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Run a relay server for peers that cannot accept connections
+.SH OPTIONS
+.TP
+\fB\-\-listen\fR \fI<LISTEN>\fR [default: 0.0.0.0:42425]
+Address to listen on
+.TP
+\fB\-\-name\fR \fI<NAMES>\fR
+Name clients dial this relay by, as host:port. Repeatable. A listener\*(Aqs proof is bound to it. Without any, proofs are not bound to a name
+.TP
+\fB\-\-allow\-node\fR \fI<NODE_ID>\fR
+Let only this node register. Repeatable. Keeps the relay out of the relay network
+.TP
+\fB\-\-password\-file\fR \fI<FILE>\fR
+Require the secret in this file to register or dial. Clients send it only to an address that includes the relay\*(Aqs key, so this needs \-\-key\-file. Keeps the relay out of the relay network
+.TP
+\fB\-\-key\-file\fR \fI<FILE>\fR
+Keep the relay\*(Aqs key in this file, created on first use, so that `host:port#key` addresses keep working across restarts
+.TP
+\fB\-\-metrics\fR \fI<ADDR>\fR
+Serve counters over HTTP on this address (off by default)
+.TP
+\fB\-\-max\-listeners\fR \fI<MAX_LISTENERS>\fR [default: 10000]
+Most registered listeners
+.TP
+\fB\-\-max\-splices\fR \fI<MAX_SPLICES>\fR [default: 500]
+Most simultaneous splices
+.TP
+\fB\-\-listeners\-per\-ip\fR \fI<LISTENERS_PER_IP>\fR [default: 2]
+Most nodes registered from one address
+.TP
+\fB\-\-splices\-per\-ip\fR \fI<SPLICES_PER_IP>\fR [default: 8]
+Most splices one dialing address may have open
+.TP
+\fB\-\-connects\-per\-minute\fR \fI<CONNECTS_PER_MINUTE>\fR [default: 20]
+Most connect attempts from one address in a minute
+.TP
+\fB\-\-splice\-kib\-per\-sec\fR \fI<SPLICE_KIB_PER_SEC>\fR [default: 8192]
+Rate of one splice in KiB per second, 0 for no limit
+.TP
+\fB\-\-node\-daily\-mib\fR \fI<NODE_DAILY_MIB>\fR [default: 10240]
+Most bytes carried for one node in a day, in MiB
+.TP
+\fB\-\-idle\-secs\fR \fI<IDLE_SECS>\fR [default: 120]
+Close a splice after this many idle seconds
+.TP
+\fB\-\-no\-network\fR
+Stay out of the relay network: no DHT announce and no gossip
+.TP
+\fB\-\-public\fR
+This relay is reachable from the internet: announce it without first asking another relay to dial back
+.TP
+\fB\-\-allow\-private\fR
+Accept relays on loopback and private addresses, for a closed network
+.TP
+\fB\-\-round\-secs\fR \fI<ROUND_SECS>\fR [default: 1800]
+Seconds between relay network rounds (gossip)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

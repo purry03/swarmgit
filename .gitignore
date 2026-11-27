@@ -19,3 +19,4 @@
 /Dockerfile*
 /compose*.yaml
 /.dockerignore
+/Beta.md

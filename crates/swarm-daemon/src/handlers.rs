@@ -16,7 +16,7 @@ pub fn is_stop(cmd: &str) -> bool {
 /// True when the client wants progress events while the command runs.
 #[must_use]
 pub fn wants_progress(request: &Request) -> bool {
-    request.cmd == "sync"
+    matches!(request.cmd.as_str(), "sync" | "inspect")
         && request
             .args
             .get("progress")
@@ -45,7 +45,14 @@ async fn dispatch(
     let args = &request.args;
     match request.cmd.as_str() {
         "hello" => Ok(json!({
+            // With a `repo`, the link to share it.
+            "link": state.net().and_then(|net| {
+                let repo = args.get("repo").and_then(Value::as_str)?;
+                let repo = swarm_core::RepoId::from_base32(repo).ok()?;
+                Some(net.link(repo).to_string())
+            }),
             "daemon_version": env!("CARGO_PKG_VERSION"),
+            "pid": std::process::id(),
             "home": state.home.root().to_string_lossy(),
             "port": state.net().map(|net| net.listen.port()).unwrap_or(0),
             "listen": state.net().map(|net| net.listen.to_string()).unwrap_or_default(),
@@ -57,12 +64,21 @@ async fn dispatch(
         })),
         "init_repo" => repo::init_repo(state, args).await,
         "sync" => repo::sync(state, args, progress).await,
+        "inspect" => repo::inspect(state, args, progress).await,
+        "about" => repo::about(state, args).await,
+        "mr_list" => repo::mr_list(state, args).await,
+        "mr_show" => repo::mr_show(state, args).await,
+        "mr_open" => repo::mr_open(state, args).await,
+        "mr_event" => repo::mr_event(state, args).await,
         "publish" => repo::publish(state, args).await,
         "repo_info" => repo::repo_info(state, args).await,
         "list_repos" => repo::list_repos(state, args).await,
         "status" => repo::status(state, args).await,
+        "peers" => repo::peers(state, args).await,
         "seed" => repo::set_seeding(state, args, true).await,
         "unseed" => repo::set_seeding(state, args, false).await,
+        "purge" => repo::purge(state, args).await,
+        "workdir" => repo::record_workdir(state, args).await,
         "fork" => repo::fork(state, args).await,
         "key_new" => repo::key_new(state, args).await,
         "key_id" => repo::key_id_of(state, args).await,

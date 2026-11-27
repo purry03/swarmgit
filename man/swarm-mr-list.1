@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH swarm-mr-list 1  "swarm 0.1.0" "Swarmgit manual"
+.SH NAME
+swarm\-mr\-list \- List open merge requests
+.SH SYNOPSIS
+\fBswarm mr list\fR [\fB\-\-all\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-json\fR] [\fB\-\-offline\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+List open merge requests
+.SH OPTIONS
+.TP
+\fB\-\-all\fR
+Include merged and closed ones
+.TP
+\fB\-R\fR, \fB\-\-repo\fR \fI<REPO>\fR
+A repo ID or link; by default the swarm remote of this clone
+.TP
+\fB\-\-json\fR
+Print one JSON object on stdout
+.TP
+\fB\-\-offline\fR
+Use what is already here instead of syncing first
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

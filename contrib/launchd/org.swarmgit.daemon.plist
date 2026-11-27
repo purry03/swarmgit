@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Swarmgit daemon as a per-user launch agent.
+
+    cp org.swarmgit.daemon.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.swarmgit.daemon.plist
+
+  Adjust the path to `swarm` if it is not in /usr/local/bin.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.swarmgit.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/swarm</string>
+    <string>daemon</string>
+    <string>--foreground</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SWARM_IDLE_EXIT_MINUTES</key>
+    <string>0</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+</dict>
+</plist>

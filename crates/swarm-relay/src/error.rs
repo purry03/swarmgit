@@ -29,11 +29,13 @@ pub enum RelayError {
 }
 
 impl RelayError {
-    /// The remote error code, when this is a remote error.
+    /// The error code: the relay's own, or `auth_failed` for a proof or a
+    /// relay key that did not check out.
     #[must_use]
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::Remote { code, .. } => Some(code),
+            Self::Auth(_) => Some("auth_failed"),
             _ => None,
         }
     }

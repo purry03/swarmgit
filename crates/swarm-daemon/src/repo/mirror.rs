@@ -56,10 +56,21 @@ pub(crate) async fn download(base: &str, repo: RepoId, dest: &Path) -> Result<u6
     let url = format!("{}/{}/{FILE}", base.trim_end_matches('/'), repo.to_base32());
     let dest = dest.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let agent = ureq::AgentBuilder::new()
+        let mut builder = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))
-            .timeout_read(Duration::from_secs(30))
-            .build();
+            .timeout_read(Duration::from_secs(30));
+        // M9: HTTP goes through the proxy too. ureq hands names to a SOCKS5
+        // proxy unresolved.
+        if let Some(proxy) = swarm_net::Proxy::from_env().map_err(|err| err.to_string())? {
+            let auth = match &proxy.auth {
+                Some((user, password)) => format!("{user}:{password}@"),
+                None => String::new(),
+            };
+            let socks = ureq::Proxy::new(format!("socks5://{auth}{}", proxy.server))
+                .map_err(|err| format!("proxy: {err}"))?;
+            builder = builder.proxy(socks);
+        }
+        let agent = builder.build();
         let response = agent
             .get(&url)
             .call()

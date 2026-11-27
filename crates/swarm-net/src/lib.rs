@@ -16,11 +16,16 @@ pub mod error;
 pub mod frame;
 pub mod handshake;
 pub mod message;
+pub mod proxy;
 pub mod raw;
 pub mod session;
+pub mod transport;
+pub mod udp;
 
 pub use addr::{PeerAddr, PeerAddrKind};
 pub use error::NetError;
-pub use handshake::{PeerInfo, Transport};
+pub use handshake::{Established, Options, PeerInfo};
 pub use message::{Message, Rid};
+pub use proxy::{Endpoint, Proxy};
 pub use session::{PackStream, Session, SessionHandle};
+pub use transport::{BoxConn, ObfsTransport, Shaper, Tcp, Transport};
